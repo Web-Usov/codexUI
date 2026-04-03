@@ -183,7 +183,13 @@
           </div>
         </div>
 
-        <div v-else class="message-row" :data-role="message.role" :data-message-type="message.messageType || ''">
+        <div
+          v-else
+          class="message-row"
+          :data-role="message.role"
+          :data-message-type="message.messageType || ''"
+          @click="onConversationRowClick(message, $event)"
+        >
           <div class="message-stack" :data-role="message.role">
             <article class="message-body" :data-role="message.role">
               <ul
@@ -582,6 +588,7 @@
               <div
                 v-if="showCopyResponseButton(message) || showRollbackButton(message)"
                 class="message-toolbar"
+                :class="{ 'message-toolbar-visible': isMessageToolbarVisible(message.id) }"
                 :data-role="message.role"
               >
                 <button
@@ -1227,6 +1234,7 @@ const conversationListRef = ref<HTMLElement | null>(null)
 const bottomAnchorRef = ref<HTMLElement | null>(null)
 const modalImageUrl = ref('')
 const copiedResponseAnchorId = ref('')
+const tappedToolbarMessageId = ref('')
 const toolQuestionAnswers = ref<Record<string, string>>({})
 const toolQuestionOtherAnswers = ref<Record<string, string>>({})
 const localScrollState = ref<ThreadScrollState | null>(null)
@@ -2180,6 +2188,27 @@ function showRollbackButton(message: UiMessage): boolean {
   return typeof rollbackTurnIdByAnchorId.value[message.id] === 'string'
 }
 
+function isInteractiveClickTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false
+  return Boolean(target.closest('button, a, input, textarea, select, summary, [role="button"]'))
+}
+
+function isTouchToolbarMode(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false
+  return window.matchMedia('(hover: none)').matches
+}
+
+function isMessageToolbarVisible(anchorMessageId: string): boolean {
+  return tappedToolbarMessageId.value === anchorMessageId
+}
+
+function onConversationRowClick(message: UiMessage, event: MouseEvent): void {
+  if (!isTouchToolbarMode()) return
+  if (isInteractiveClickTarget(event.target)) return
+  if (!showCopyResponseButton(message) && !showRollbackButton(message)) return
+  tappedToolbarMessageId.value = tappedToolbarMessageId.value === message.id ? '' : message.id
+}
+
 function rollbackResponse(anchorMessageId: string): void {
   const turnId = rollbackTurnIdByAnchorId.value[anchorMessageId]
   if (!turnId) return
@@ -2401,106 +2430,130 @@ function splitTextByFileUrls(text: string): InlineSegment[] {
   return segments
 }
 
-function parseInlineSegments(text: string): InlineSegment[] {
-  if (!text.includes('`')) return splitTextByFileUrls(text)
+function applyInlineCodeSpansAcrossTextSegments(segments: InlineSegment[]): InlineSegment[] {
+  const output: InlineSegment[] = []
 
-  const segments: InlineSegment[] = []
-  let cursor = 0
-  let textStart = 0
+  const pushText = (value: string): void => {
+    if (!value) return
+    output.push({ kind: 'text', value })
+  }
 
-  while (cursor < text.length) {
-    if (text[cursor] !== '`') {
-      cursor += 1
+  for (const segment of segments) {
+    if (segment.kind !== 'text') {
+      output.push(segment)
       continue
     }
 
-    let openLength = 1
-    while (cursor + openLength < text.length && text[cursor + openLength] === '`') {
-      openLength += 1
+    const text = segment.value
+    if (!text.includes('`')) {
+      pushText(text)
+      continue
     }
-    const delimiter = '`'.repeat(openLength)
 
-    let searchFrom = cursor + openLength
-    let closingStart = -1
-    while (searchFrom < text.length) {
-      const candidate = text.indexOf(delimiter, searchFrom)
-      if (candidate < 0) break
+    let cursor = 0
+    let textStart = 0
 
-      const hasBacktickBefore = candidate > 0 && text[candidate - 1] === '`'
-      const hasBacktickAfter =
-        candidate + openLength < text.length && text[candidate + openLength] === '`'
-      const hasNewLineInside = text.slice(cursor + openLength, candidate).includes('\n')
-
-      if (!hasBacktickBefore && !hasBacktickAfter && !hasNewLineInside) {
-        closingStart = candidate
-        break
+    while (cursor < text.length) {
+      if (text[cursor] !== '`') {
+        cursor += 1
+        continue
       }
-      searchFrom = candidate + 1
-    }
 
-    if (closingStart < 0) {
-      cursor += openLength
-      continue
-    }
+      let openLength = 1
+      while (cursor + openLength < text.length && text[cursor + openLength] === '`') {
+        openLength += 1
+      }
+      const delimiter = '`'.repeat(openLength)
 
-    if (cursor > textStart) {
-      segments.push(...splitTextByFileUrls(text.slice(textStart, cursor)))
-    }
+      let searchFrom = cursor + openLength
+      let closingStart = -1
+      while (searchFrom < text.length) {
+        const candidate = text.indexOf(delimiter, searchFrom)
+        if (candidate < 0) break
 
-    const token = text.slice(cursor + openLength, closingStart)
-    if (token.length > 0) {
-      const markdownLink = parseMarkdownLinkToken(token)
-      if (markdownLink) {
-        if (/^https?:\/\//u.test(markdownLink.target)) {
-          segments.push({
-            kind: 'url',
-            value: markdownLink.label || markdownLink.target,
-            href: markdownLink.target,
-          })
-        } else {
-          const markdownFileReference = parseFileReference(markdownLink.target)
-          if (markdownFileReference) {
-            segments.push({
-              kind: 'file',
-              value: markdownLink.target,
-              path: markdownFileReference.path,
-              displayPath: markdownLink.label || markdownLink.target,
-              downloadName: getBasename(markdownFileReference.path),
+        const hasBacktickBefore = candidate > 0 && text[candidate - 1] === '`'
+        const hasBacktickAfter =
+          candidate + openLength < text.length && text[candidate + openLength] === '`'
+        const hasNewLineInside = text.slice(cursor + openLength, candidate).includes('\n')
+
+        if (!hasBacktickBefore && !hasBacktickAfter && !hasNewLineInside) {
+          closingStart = candidate
+          break
+        }
+        searchFrom = candidate + 1
+      }
+
+      if (closingStart < 0) {
+        cursor += openLength
+        continue
+      }
+
+      if (cursor > textStart) {
+        pushText(text.slice(textStart, cursor))
+      }
+
+      const token = text.slice(cursor + openLength, closingStart)
+      if (token.length > 0) {
+        const markdownLink = parseMarkdownLinkToken(token)
+        if (markdownLink) {
+          if (/^https?:\/\//u.test(markdownLink.target)) {
+            output.push({
+              kind: 'url',
+              value: markdownLink.label || markdownLink.target,
+              href: markdownLink.target,
             })
           } else {
-            segments.push({ kind: 'code', value: token })
+            const markdownFileReference = parseFileReference(markdownLink.target)
+            if (markdownFileReference) {
+              output.push({
+                kind: 'file',
+                value: markdownLink.target,
+                path: markdownFileReference.path,
+                displayPath: markdownLink.label || markdownLink.target,
+                downloadName: getBasename(markdownFileReference.path),
+              })
+            } else {
+              output.push({ kind: 'code', value: token })
+            }
+          }
+        } else {
+          const fileReference = parseFileReference(token)
+          if (fileReference) {
+            const displayPath = fileReference.line
+              ? `${fileReference.path}:${String(fileReference.line)}`
+              : fileReference.path
+            output.push({
+              kind: 'file',
+              value: token,
+              path: fileReference.path,
+              displayPath,
+              downloadName: getBasename(fileReference.path),
+            })
+          } else {
+            output.push({ kind: 'code', value: token })
           }
         }
       } else {
-        const fileReference = parseFileReference(token)
-        if (fileReference) {
-          const displayPath = fileReference.line
-            ? `${fileReference.path}:${String(fileReference.line)}`
-            : fileReference.path
-          segments.push({
-            kind: 'file',
-            value: token,
-            path: fileReference.path,
-            displayPath,
-            downloadName: getBasename(fileReference.path),
-          })
-        } else {
-          segments.push({ kind: 'code', value: token })
-        }
+        output.push({ kind: 'text', value: `${delimiter}${delimiter}` })
       }
-    } else {
-      segments.push({ kind: 'text', value: `${delimiter}${delimiter}` })
+
+      cursor = closingStart + openLength
+      textStart = cursor
     }
 
-    cursor = closingStart + openLength
-    textStart = cursor
+    if (textStart < text.length) {
+      pushText(text.slice(textStart))
+    }
   }
 
-  if (textStart < text.length) {
-    segments.push(...splitTextByFileUrls(text.slice(textStart)))
-  }
+  return output
+}
 
-  return segments
+function parseInlineSegments(text: string): InlineSegment[] {
+  const markdownAndLinkSegments = splitTextByFileUrls(text)
+  if (!text.includes('`')) return markdownAndLinkSegments
+
+  return applyInlineCodeSpansAcrossTextSegments(markdownAndLinkSegments)
 }
 
 function toRenderableImageUrl(value: string): string {
@@ -3701,8 +3754,19 @@ watch(
     localScrollState.value = null
     autoFollowOutput.value = props.scrollState?.isAtBottom !== false
     modalImageUrl.value = ''
+    tappedToolbarMessageId.value = ''
   },
   { flush: 'post' },
+)
+
+watch(
+  () => props.messages.map((message) => message.id),
+  (messageIds) => {
+    if (!tappedToolbarMessageId.value) return
+    if (!messageIds.includes(tappedToolbarMessageId.value)) {
+      tappedToolbarMessageId.value = ''
+    }
+  },
 )
 
 watch(
@@ -3921,9 +3985,13 @@ onBeforeUnmount(() => {
   @apply opacity-100;
 }
 
+.message-toolbar-visible {
+  @apply opacity-100;
+}
+
 @media (hover: none) {
   .message-toolbar {
-    @apply opacity-100;
+    @apply opacity-[0.01];
   }
 }
 

@@ -753,11 +753,13 @@ This file tracks manual regression and feature verification steps.
 1. Send a message that includes Markdown file links whose targets contain parentheses, for example: `[/root/New Project (1)/codexui/src/App.vue:426](/root/New Project (1)/codexui/src/App.vue:426)`.
 2. Send a message that includes a Markdown web link with parentheses in the URL path, for example: `[docs](https://example.com/path_(v1)/intro)`.
 3. Send a message that includes a Markdown image link whose target contains parentheses, for example: `![sample](/root/New Project (1)/codexui/output/playwright/sample_(1).png)`.
-4. Send a message using a percent-encoded absolute path target, for example: `[/root/New Project (1)/codexui/AGENTS.md](/root/New%20Project%20(1)/codexui/AGENTS.md)`.
-5. Verify rendering in the chat transcript for all messages and click both file links.
+4. Send a message where the Markdown link label is wrapped in inline code, for example: ``[`/root/New Project (1)/codexui/AGENTS.md`](/root/New%20Project%20(1)/codexui/AGENTS.md)``.
+5. Send a message using a percent-encoded absolute path target, for example: `[/root/New Project (1)/codexui/AGENTS.md](/root/New%20Project%20(1)/codexui/AGENTS.md)`.
+6. Verify rendering in the chat transcript for all messages and click each file link.
 
 #### Expected Results
 - Markdown links render as clickable anchors instead of raw bracket text when the target contains parentheses.
+- Markdown links still render correctly when the label itself is wrapped in inline code (backticks).
 - File links open through the app file-browse URL behavior.
 - Percent-encoded file path targets do not become double-encoded (for example `%20` remains `%20`, not `%2520`), and linked files open successfully.
 - HTTP/HTTPS links open as external links.
@@ -766,7 +768,7 @@ This file tracks manual regression and feature verification steps.
 #### Rollback/Cleanup
 - None.
 
-### Feature: Rollback button remains visible on touch/mobile conversation rows
+### Feature: Rollback button reveals on tap for touch/mobile conversation rows
 
 #### Prerequisites
 - App server is running from this repository.
@@ -775,15 +777,19 @@ This file tracks manual regression and feature verification steps.
 
 #### Steps
 1. Open the thread conversation on a touch viewport where hover is not available.
-2. Locate an assistant response row and inspect the action toolbar under the message.
-3. Verify the `Rollback` action is visible without needing hover.
-4. Tap `Rollback` and confirm the action triggers the existing rollback flow.
-5. Navigate message actions using keyboard focus on desktop (`Tab`) and verify focused rows also reveal the toolbar.
+2. Locate an assistant response row and confirm the action toolbar is initially hidden.
+3. Tap a non-interactive area of that message row once.
+4. Verify the action toolbar appears and includes the `Rollback` action.
+5. Tap the same row again and verify the toolbar hides again.
+6. Tap `Rollback` while the toolbar is visible and confirm the action triggers the existing rollback flow.
+7. On desktop, hover the same row and verify the toolbar appears on hover.
+8. Navigate message actions using keyboard focus (`Tab`) and verify focused rows also reveal the toolbar.
 
 #### Expected Results
-- On touch/mobile viewports, the message action toolbar is visible by default.
-- The `Rollback` button is visible and actionable on assistant response rows.
-- Keyboard focus reveals the same toolbar visibility behavior on desktop.
+- On touch/mobile viewports, the message action toolbar is hidden by default and appears only after tapping the row.
+- A second tap on the same row hides the toolbar again.
+- The `Rollback` button is visible and actionable once the toolbar is revealed.
+- Desktop hover and keyboard focus continue to reveal the toolbar.
 
 #### Rollback/Cleanup
 - None.
