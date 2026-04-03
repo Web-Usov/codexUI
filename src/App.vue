@@ -423,7 +423,7 @@
                 </div>
               </div>
 
-              <div class="composer-with-queue composer-with-queue-home">
+              <div class="composer-with-queue-home">
                 <ThreadComposer ref="homeThreadComposerRef" :active-thread-id="composerThreadContextId"
                   :cwd="composerCwd"
                   :collaboration-modes="availableCollaborationModes"
@@ -2670,7 +2670,7 @@ async function submitFirstMessageForNewThread(
 }
 
 .composer-with-queue-home {
-  @apply mx-auto max-w-4xl;
+  @apply w-full shrink-0 mx-auto max-w-3xl;
 }
 
 .content-header-review-button {
