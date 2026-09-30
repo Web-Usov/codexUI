@@ -146,15 +146,25 @@ function extractTextParts(value: unknown): string {
     .join('\n')
 }
 
+function prependSystemMessages(messages: ChatMessage[], systemMessages: string[]): ChatMessage[] {
+  if (systemMessages.length === 0) return messages
+  return [
+    { role: 'system', content: systemMessages.join('\n\n') },
+    ...messages,
+  ]
+}
+
 export function responsesInputToMessages(input: string | ResponsesApiInput[], instructions?: string): ChatMessage[] {
   const messages: ChatMessage[] = []
+  const systemMessages: string[] = []
   let pendingReasoningContent = ''
-  if (instructions) {
-    messages.push({ role: 'system', content: instructions })
+  const trimmedInstructions = instructions?.trim() ?? ''
+  if (trimmedInstructions) {
+    systemMessages.push(trimmedInstructions)
   }
   if (typeof input === 'string') {
     messages.push({ role: 'user', content: input })
-    return messages
+    return prependSystemMessages(messages, systemMessages)
   }
 
   for (const item of input) {
@@ -189,7 +199,12 @@ export function responsesInputToMessages(input: string | ResponsesApiInput[], in
               .filter((part) => part.length > 0)
               .join('\n')
           : (typeof item.text === 'string' ? item.text : '')
-      const role = item.role === 'developer' ? 'system' : item.role
+      if (item.role === 'developer' || item.role === 'system') {
+        const trimmedText = text.trim()
+        if (trimmedText) systemMessages.push(trimmedText)
+        continue
+      }
+      const role = item.role
       if (role === 'assistant') {
         appendAssistantText(messages, text, pendingReasoningContent)
         pendingReasoningContent = ''
@@ -221,7 +236,7 @@ export function responsesInputToMessages(input: string | ResponsesApiInput[], in
     }
   }
 
-  return messages
+  return prependSystemMessages(messages, systemMessages)
 }
 
 function responsesToolsToChatTools(tools: unknown): ChatCompletionsRequest['tools'] {
