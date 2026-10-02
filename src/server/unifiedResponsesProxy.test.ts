@@ -376,9 +376,10 @@ describe('unified responses proxy request overrides', () => {
       })
 
       expect(response.status).toBe(200)
-      expect(upstreamRequest?.temperature).toBe(0.2)
-      expect(upstreamRequest?.reasoning_effort).toBe('none')
-      expect(upstreamRequest?.messages).toEqual([{ role: 'user', content: 'hi' }])
+      const capturedRequest = upstreamRequest as Record<string, unknown> | null
+      expect(capturedRequest?.temperature).toBe(0.2)
+      expect(capturedRequest?.reasoning_effort).toBe('none')
+      expect(capturedRequest?.messages).toEqual([{ role: 'user', content: 'hi' }])
     } finally {
       await close(proxy)
       await close(upstream)
