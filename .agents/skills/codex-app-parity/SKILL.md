@@ -158,9 +158,9 @@ done
 
 If a usable target is found, reuse it and do not launch another Codex instance.
 
-Only if no reusable CDP target exists, prefer running a separate Codex.app debug instance so the user's normal Codex session is not interrupted and the CDP target can stay alive after tests.
+Only if no reusable CDP target exists, run the helper's separate native Codex.app debug instance so the user's normal Codex session is not interrupted and the CDP target can stay alive after tests.
 
-In this repo, prefer the maintained helper script first:
+In this repo, prefer the maintained helper script first. It launches an isolated native Codex.app instance by default:
 
 ```bash
 bash /Users/igor/Git-projects/codex-web-local/scripts/run-codex-unpacked-debug.sh
@@ -168,11 +168,10 @@ bash /Users/igor/Git-projects/codex-web-local/scripts/run-codex-unpacked-debug.s
 
 The script:
 
-- launches Codex.app from the installed `app.asar` under external Electron
-- pins the external runtime to `electron@41.2.0`
-- auto-picks free CDP and Node inspector ports
-- verifies the endpoints after launch
-- prepares the required native Sparkle shim for external-Electron runs
+- uses `open -na` with its own `--user-data-dir`, leaving the normal Codex session untouched
+- auto-picks a free CDP port and verifies the app renderer target
+- prints the page WebSocket URL only after an `app://-/index.html` page is live
+- supports `--external-electron` only for a focused diagnostic that explicitly needs unpacked `app.asar` behavior
 
 If the helper script fails, treat the failure as a skill maintenance signal, not just a one-off launch error:
 
@@ -182,6 +181,11 @@ If the helper script fails, treat the failure as a skill maintenance signal, not
 - Use a manual launch fallback only when the script cannot be repaired safely in the current task.
 
 Use `--verify-only` when you only need to confirm whether the current endpoints are still alive.
+
+The helper is ready only when it prints a `Renderer target is live:` value whose
+URL begins with `app://-/index.html`. A listening `/json/version` endpoint alone
+does not establish that the Codex renderer has started. The helper waits for this
+target and exits with status `3` if it does not appear.
 
 Use a fresh app instance with its own profile directory:
 
@@ -204,9 +208,12 @@ done
 ```
 
 If Codex.app is already running without CDP, `open -a "Codex" --args --remote-debugging-port=3434` usually does **not** enable CDP because Electron reuses the existing app instance. Restart Codex.app with the port enabled.
-Fallback only when a separate instance cannot be used: restart all Codex.app processes and launch the binary with `nohup`.
+Fallback only when a separate instance cannot be used: restart all Codex.app processes and launch the bundle executable with `nohup`. Do not assume that executable is named `Codex`; the installed app currently uses `ChatGPT`.
 
 ```bash
+CODEX_EXECUTABLE="$(find /Applications/Codex.app/Contents/MacOS -maxdepth 1 -type f -perm -111 | head -n 1)"
+test -n "$CODEX_EXECUTABLE"
+
 pkill -TERM -f "/Applications/Codex.app" 2>/dev/null || true
 sleep 2
 if pgrep -f "/Applications/Codex.app" >/dev/null 2>&1; then
@@ -214,7 +221,7 @@ if pgrep -f "/Applications/Codex.app" >/dev/null 2>&1; then
   sleep 1
 fi
 
-nohup "/Applications/Codex.app/Contents/MacOS/Codex" \
+nohup "$CODEX_EXECUTABLE" \
   --remote-debugging-port="$CDP_PORT" \
   >/tmp/codex-cdp.log 2>&1 &
 ```
@@ -230,6 +237,7 @@ Important caveats:
 - Do not call `browser.close()` when the Codex.app session should remain open.
 - In Playwright builds where `browser.disconnect()` is unavailable for CDP sessions, connect, inspect/capture, and exit the test process without `close()`; this preserves the running Codex.app instance.
 - Existing helper processes can keep stale non-CDP state alive; killing all `/Applications/Codex.app` processes is more reliable than only `pkill -x Codex`.
+- A packaged app can rename its macOS executable independently of its bundle name. Discover the executable under `Contents/MacOS` instead of hard-coding `Contents/MacOS/Codex`.
 - CDP inspection can expose local thread titles and workspace names. Avoid pasting sensitive screenshot contents into public artifacts.
 
 ## Findings: CDP Instance Reuse (2026-04-26)
@@ -238,11 +246,11 @@ Important caveats:
 - Before using `open -na "Codex"` or starting a fresh debug profile, probe common local ports and reuse an existing endpoint when it already serves a valid `app://-/index.html` page target.
 - Creating unnecessary extra Codex.app instances makes parity work noisier and can leave behind multiple stale debug profiles under `/tmp/codex-cdp-*`.
 
-## Findings: External Electron Debug Launcher (2026-05-06)
+## Findings: External Electron Diagnostic Launcher (2026-05-06)
 
 - In this workspace, the most reliable parity-debug launch path is now:
   - `bash /Users/igor/Git-projects/codex-web-local/scripts/run-codex-unpacked-debug.sh`
-- The helper intentionally uses external Electron instead of `/Applications/Codex.app/Contents/MacOS/Codex`, because that preserves the generic Electron-style process/icon behavior some parity workflows expect while still launching the installed Codex `app.asar`.
+- The helper can use external Electron for diagnostics that explicitly need direct `app.asar` execution; this is no longer the default parity path.
 - Using an unpinned external Electron such as `pnpm dlx electron` can break startup because Codex.app expects Electron-41-era native resources; the current helper pins the runtime to `electron@41.2.0`.
 - External-Electron startup also needs Codex’s bundled Sparkle native addon available at the external Electron resource path. The helper now prepares a shim by linking:
   - `/Applications/Codex.app/Contents/Resources/native/sparkle.node`
@@ -252,6 +260,20 @@ Important caveats:
   - Node inspector endpoint exposed from `--inspect`
   - WebSocket connection to the Node inspector target succeeds, not just `json/list`
 - When validating a parity session, do not stop at `curl /json/list`; also confirm a real WebSocket connect to the returned `webSocketDebuggerUrl`.
+
+## Findings: Renderer Target Gate and Renamed Bundle Executable (2026-08-12)
+
+- On this Mac, `/Applications/Codex.app/Contents/MacOS/Codex` does not exist; the executable currently is `/Applications/Codex.app/Contents/MacOS/ChatGPT`. Raw-binary fallback commands must discover an executable from `Contents/MacOS` rather than hard-code its filename.
+- The native `open -na` path is the default because it produced a stable `app://-/index.html` renderer target on port `9240` on 2026-08-12. External Electron is diagnostic opt-in only.
+- `scripts/run-codex-unpacked-debug.sh` treats a matching renderer target as the launch success condition. Its `--verify-only` mode applies the same test, and its normal path exits `3` when the target does not materialize.
+- Historical confirmation (2026-05-27): a separate packaged instance launched with `open -na /Applications/Codex.app --args --enable-logging --remote-debugging-port=<port>` published frontend CDP successfully. The older `app.asar` extraction plus `app.asar.unpacked` overlay was for a patched-app experiment, not the normal CDP path.
+
+## Findings: Persisted Thread Goal UI (2026-08-12)
+
+- Persisted goals are independent app-server state and are not included in the normal thread/read rendering model. A parity client must call `thread/goal/get` when selecting an existing thread.
+- Codex.app keeps a compact status/objective bar above the composer and a Goal indicator in the composer. The pencil opens goal editing; web parity can use `thread/goal/set` and `thread/goal/clear` directly.
+- Current goal statuses are `active`, `paused`, `blocked`, `usageLimited`, `budgetLimited`, and `complete`; older local helpers that omit `blocked` and `usageLimited` are stale.
+- An isolated packaged-app renderer may expose `app://-/index.html` over CDP but remain on the avatar overlay or hang during screenshot capture. When the user supplies an exact current desktop screenshot, preserve it as the visual reference and explicitly report the CDP reachability gap rather than claiming the generic overlay proves the target UI.
 
 ### Architecture Notes
 

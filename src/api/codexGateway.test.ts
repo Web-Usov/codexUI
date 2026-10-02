@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getAvailableModelIds, getThreadDetail, listDirectoryComposioConnectors, resumeThread, startThreadTurn } from './codexGateway'
+import { clearThreadGoal, getAvailableModelIds, getThreadDetail, getThreadGoal, resumeThread, setThreadGoal, startThreadTurn } from './codexGateway'
 
 function mockRpcFetch(): { requests: Array<{ method: string, params: Record<string, unknown> }> } {
   const requests: Array<{ method: string, params: Record<string, unknown> }> = []
@@ -58,33 +58,6 @@ describe('startThreadTurn collaboration mode payloads', () => {
         developer_instructions: null,
       },
     })
-  })
-})
-
-describe('listDirectoryComposioConnectors', () => {
-  afterEach(() => {
-    vi.unstubAllGlobals()
-  })
-
-  it('sends search queries as query params expected by the server', async () => {
-    const requests: string[] = []
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
-      requests.push(String(input))
-      return new Response(JSON.stringify({
-        data: [],
-        nextCursor: null,
-        total: 0,
-      }), {
-        status: 200,
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      })
-    }))
-
-    await listDirectoryComposioConnectors('instagram', '50', 25)
-
-    expect(requests).toEqual(['/codex-api/composio/connectors?query=instagram&cursor=50&limit=25'])
   })
 })
 
@@ -206,6 +179,40 @@ describe('getThreadDetail', () => {
   })
 })
 
+describe('thread goals', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('reads, updates, and clears persisted thread goals', async () => {
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = []
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { method: string; params: Record<string, unknown> }
+      requests.push(body)
+      if (body.method === 'thread/goal/clear') {
+        return new Response(JSON.stringify({ result: { cleared: true } }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }
+      return new Response(JSON.stringify({ result: { goal: {
+        threadId: body.params.threadId,
+        objective: body.params.objective ?? 'Existing objective',
+        status: body.params.status ?? 'blocked',
+        tokenBudget: null,
+        tokensUsed: 12,
+        timeUsedSeconds: 34,
+        createdAt: 1,
+        updatedAt: 2,
+      } } }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }))
+
+    await expect(getThreadGoal('thread-goal')).resolves.toMatchObject({ objective: 'Existing objective', status: 'blocked' })
+    await expect(setThreadGoal('thread-goal', { objective: 'Edited objective', status: 'active' })).resolves.toMatchObject({ objective: 'Edited objective', status: 'active' })
+    await expect(clearThreadGoal('thread-goal')).resolves.toBe(true)
+    expect(requests).toEqual([
+      { method: 'thread/goal/get', params: { threadId: 'thread-goal' } },
+      { method: 'thread/goal/set', params: { threadId: 'thread-goal', objective: 'Edited objective', status: 'active' } },
+      { method: 'thread/goal/clear', params: { threadId: 'thread-goal' } },
+    ])
+  })
+})
+
 describe('resumeThread', () => {
   afterEach(() => {
     vi.useRealTimers()
@@ -233,6 +240,64 @@ describe('resumeThread', () => {
     expect(results.every((result) => result.status === 'rejected')).toBe(true)
     expect(requests).toEqual([
       { method: 'thread/resume', params: { threadId: 'missing-thread' } },
+    ])
+  })
+
+  it('retries legacy custom_endpoint threads through the configured OpenAI endpoint', async () => {
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = []
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = typeof init?.body === 'string'
+        ? JSON.parse(init.body) as { method: string; params: Record<string, unknown> }
+        : { method: '', params: {} }
+      requests.push(body)
+      if (requests.length === 1) {
+        return new Response(JSON.stringify({ error: 'Model provider `custom_endpoint` not found' }), {
+          status: 502,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return new Response(JSON.stringify({
+        result: { model: 'gpt-5.6-terra', modelProvider: 'openai', thread: { turns: [] } },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }))
+
+    await expect(resumeThread('legacy-custom-endpoint-thread')).resolves.toMatchObject({
+      modelProvider: 'openai',
+    })
+    expect(requests).toEqual([
+      { method: 'thread/resume', params: { threadId: 'legacy-custom-endpoint-thread' } },
+      { method: 'thread/resume', params: { threadId: 'legacy-custom-endpoint-thread', modelProvider: 'openai' } },
+    ])
+  })
+
+  it('reads a thread when another Codex process owns its active writer', async () => {
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = []
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = typeof init?.body === 'string'
+        ? JSON.parse(init.body) as { method: string; params: Record<string, unknown> }
+        : { method: '', params: {} }
+      requests.push(body)
+      if (requests.length === 1) {
+        return new Response(JSON.stringify({ error: 'thread shared-thread already has an active writer' }), {
+          status: 502,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return new Response(JSON.stringify({
+        result: { thread: { modelProvider: 'openai', turns: [] } },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }))
+
+    await expect(resumeThread('shared-thread')).resolves.toMatchObject({ modelProvider: 'openai' })
+    expect(requests).toEqual([
+      { method: 'thread/resume', params: { threadId: 'shared-thread' } },
+      { method: 'thread/read', params: { threadId: 'shared-thread', includeTurns: true } },
     ])
   })
 

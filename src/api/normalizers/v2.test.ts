@@ -6,20 +6,39 @@ function threadReadResponseWithContent(content: ThreadReadResponse['thread']['tu
   return {
     thread: {
       id: 'thread-1',
+      extra: null,
+      sessionId: 'session-1',
+      forkedFromId: null,
+      parentThreadId: null,
       preview: 'Use a skill',
+      ephemeral: false,
+      section: null,
+      sectionEnteredAt: null,
+      historyMode: 'legacy',
       modelProvider: 'openai',
       createdAt: 1,
       updatedAt: 2,
+      recencyAt: null,
+      status: { type: 'idle' },
       path: null,
       cwd: '/tmp/project',
       cliVersion: 'test',
       source: 'appServer',
+      canAcceptDirectInput: null,
+      threadSource: null,
+      agentNickname: null,
+      agentRole: null,
       gitInfo: null,
+      name: null,
       turns: [{
         id: 'turn-1',
+        itemsView: 'full',
         status: 'completed',
         error: null,
         items: content,
+        startedAt: null,
+        completedAt: null,
+        durationMs: null,
       }],
     },
   }
@@ -30,6 +49,7 @@ describe('normalizeThreadMessagesV2', () => {
     const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
       type: 'userMessage',
       id: 'user-1',
+      clientId: null,
       content: [
         { type: 'text', text: 'Use the browser skill', text_elements: [] },
         { type: 'skill', name: 'browser-use:browser', path: '/Users/igor/.codex/skills/browser/SKILL.md' },
@@ -49,8 +69,9 @@ describe('normalizeThreadMessagesV2', () => {
     const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
       type: 'userMessage',
       id: 'user-2',
+      clientId: null,
       content: [
-        { type: 'skill', name: 'composio-cli', path: '/Users/igor/.codex/skills/composio-cli/SKILL.md' },
+        { type: 'skill', name: 'playwright', path: '/Users/igor/.codex/skills/playwright/SKILL.md' },
       ],
     }]))
 
@@ -59,7 +80,7 @@ describe('normalizeThreadMessagesV2', () => {
       id: 'user-2',
       role: 'user',
       text: '',
-      skills: [{ name: 'composio-cli', path: '/Users/igor/.codex/skills/composio-cli/SKILL.md' }],
+      skills: [{ name: 'playwright', path: '/Users/igor/.codex/skills/playwright/SKILL.md' }],
     })
     expect(messages[0].isUnhandled).toBeUndefined()
   })
@@ -68,6 +89,7 @@ describe('normalizeThreadMessagesV2', () => {
     const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
       type: 'userMessage',
       id: 'automation-user-1',
+      clientId: null,
       content: [{
         type: 'text',
         text: `<heartbeat>
@@ -95,6 +117,7 @@ Reply with &lt;/instructions&gt; and A &amp; B
     const messages = normalizeThreadMessagesV2(threadReadResponseWithContent([{
       type: 'userMessage',
       id: 'user-3',
+      clientId: null,
       content: [{ type: 'text', text: 'Paged message', text_elements: [] }],
     }]), 12)
 
@@ -110,6 +133,7 @@ Reply with &lt;/instructions&gt; and A &amp; B
     const response = threadReadResponseWithContent([{
       type: 'userMessage',
       id: 'user-4',
+      clientId: null,
       content: [{ type: 'text', text: 'hi', text_elements: [] }],
     }])
     response.thread.turns[0].status = 'failed'
@@ -137,6 +161,7 @@ Reply with &lt;/instructions&gt; and A &amp; B
     response.thread.turns = [
       {
         id: '',
+        itemsView: 'full',
         status: 'failed',
         error: {
           message: 'first failed turn',
@@ -144,9 +169,13 @@ Reply with &lt;/instructions&gt; and A &amp; B
           additionalDetails: null,
         },
         items: [],
+        startedAt: null,
+        completedAt: null,
+        durationMs: null,
       },
       {
         id: '   ',
+        itemsView: 'full',
         status: 'failed',
         error: {
           message: 'second failed turn',
@@ -154,6 +183,9 @@ Reply with &lt;/instructions&gt; and A &amp; B
           additionalDetails: null,
         },
         items: [],
+        startedAt: null,
+        completedAt: null,
+        durationMs: null,
       },
     ]
 

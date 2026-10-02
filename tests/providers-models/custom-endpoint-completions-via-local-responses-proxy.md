@@ -36,6 +36,8 @@ Custom endpoint `Completions` mode uses a local Responses-compatible proxy so cu
 
 ---
 
+---
+
 ### Qwen strict system-message template compatibility
 
 #### Feature/Change Name

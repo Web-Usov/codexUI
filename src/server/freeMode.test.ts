@@ -138,12 +138,13 @@ describe('unauthenticated free mode defaults', () => {
   it('keeps unauthenticated OpenCode Zen model lists limited to free models', () => {
     expect(filterOpenCodeZenModelsForAuthState([
       'big-pickle',
+      'muse-spark-1.3-contributor-free',
       'deepseek-v4-flash-free',
       'GPT-5.5',
       'claude-opus-4-7',
       'nemotron-3-super-free',
     ], null)).toEqual([
-      'big-pickle',
+      'muse-spark-1.3-contributor-free',
       'deepseek-v4-flash-free',
       'nemotron-3-super-free',
     ])
@@ -159,6 +160,19 @@ describe('unauthenticated free mode defaults', () => {
       'deepseek-v4-flash-free',
       'GPT-5.5',
     ])
+  })
+
+  it('disables hosted tools unsupported by Zen', () => {
+    const args = getFreeModeConfigArgs({
+      enabled: true, apiKey: null, model: 'muse-spark-1.3-contributor-free',
+      provider: 'opencode-zen', wireApi: 'responses',
+    }, 4173)
+    expect(args).toContain('web_search="disabled"')
+    expect(args).toContain('features.image_generation=false')
+    expect(getFreeModeConfigArgs({
+      enabled: true, apiKey: 'test', model: FREE_MODE_DEFAULT_MODEL,
+      provider: 'openrouter', wireApi: 'responses',
+    }, 4173)).not.toContain('features.image_generation=false')
   })
 
   it('keeps OpenRouter config available for manual free mode', () => {

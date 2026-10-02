@@ -1,3 +1,4 @@
+import type { ZenModelMetadata } from '../types/zenModels'
 import { computed, ref } from 'vue'
 import {
 
@@ -94,7 +95,7 @@ const RECENT_SKILLS_LOAD_REUSE_MS = 2000
 const REASONING_EFFORT_OPTIONS: ReasoningEffort[] = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']
 const GLOBAL_SERVER_REQUEST_SCOPE = '__global__'
 const MODEL_FALLBACK_ID = 'gpt-5.4-mini'
-const OPENCODE_ZEN_DEFAULT_MODEL = 'big-pickle'
+const OPENCODE_ZEN_DEFAULT_MODEL = 'muse-spark-1.3-contributor-free'
 const CODEX_CLI_MISSING_MESSAGE = 'Codex CLI not found. Install @openai/codex or set CODEXUI_CODEX_COMMAND.'
 type SelectThreadResult = 'ok' | 'not-found' | 'error'
 
@@ -1423,6 +1424,7 @@ export function useDesktopState() {
   let hasLoadedPersistedQueueState = false
   const eventUnreadByThreadId = ref<Record<string, boolean>>({})
   const availableModelIds = ref<string[]>([])
+  const availableModelMetadata = ref<ZenModelMetadata[]>([])
   const availableCollaborationModes = ref<CollaborationModeOption[]>([
     { value: 'default', label: 'Default' },
     { value: 'plan', label: 'Plan' },
@@ -1888,7 +1890,7 @@ export function useDesktopState() {
 
       if (resumedThreadById.value[threadId] !== true) {
         const resumedThread = await resumeThread(threadId)
-        if (resumedThread.model) {
+        if (resumedThread.model && !normalizeStoredModelId(selectedModelIdByContext.value[threadId])) {
           setThreadModelId(threadId, resolveThreadModelForProvider(threadId, resumedThread.model, resumedThread.modelProvider))
         }
         if (resumedThread.modelProvider) {
@@ -1977,21 +1979,30 @@ export function useDesktopState() {
     return [`Mode: ${modeLabel}`, `Model: ${modelLabel}`, `Thinking: ${effortLabel}`, `Speed: ${speedLabel}`]
   }
 
+  let modelRefreshGeneration = 0
+
   async function refreshModelPreferences(options?: { providerChanged?: boolean; includeProviderModels?: boolean }): Promise<void> {
+    const generation = ++modelRefreshGeneration
+    const refreshThreadId = selectedThreadId.value
     codexCliMissingError.value = ''
     try {
       const currentConfig = await getCurrentModelConfig()
+      if (generation !== modelRefreshGeneration || refreshThreadId !== selectedThreadId.value) return
       const normalizedConfiguredModelId = currentConfig.model.trim()
       const normalizedProviderId = normalizeProviderContextId(currentConfig.providerId)
       activeProviderId.value = normalizedProviderId
       const targetProviderId = readProviderIdForThread(selectedThreadId.value)
       const isProviderBacked = targetProviderId !== 'codex'
-      const normalizedSelectedModelId = readModelIdForThread(selectedThreadId.value)
+      let metadata: ZenModelMetadata[] = []
       const modelIds = await getAvailableModelIds({
         includeProviderModels: isProviderBacked || options?.includeProviderModels !== false,
         requireProviderModels: isProviderBacked,
         providerId: isProviderBacked ? targetProviderId : undefined,
+        onMetadata: models => { metadata = models },
       })
+      if (generation !== modelRefreshGeneration || refreshThreadId !== selectedThreadId.value) return
+      availableModelMetadata.value = metadata
+      const normalizedSelectedModelId = readModelIdForThread(refreshThreadId)
       const providerModelContextId = toProviderModelContextId(targetProviderId)
       const providerScopedModelId = providerModelContextId
         ? normalizeStoredModelId(selectedModelIdByContext.value[providerModelContextId])
@@ -2009,7 +2020,7 @@ export function useDesktopState() {
       availableModelIds.value = nextModelIds
 
       const currentModelInNewList = normalizedSelectedModelId && modelIds.includes(normalizedSelectedModelId)
-      if (!normalizedSelectedModelId || !currentModelInNewList || options?.providerChanged) {
+      if (!normalizedSelectedModelId || !currentModelInNewList || (options?.providerChanged && !selectedThreadId.value)) {
         if (options?.providerChanged && nextModelIds.length > 0) {
           if (providerScopedModelId && modelIds.includes(providerScopedModelId)) {
             setSelectedModelId(providerScopedModelId)
@@ -2045,9 +2056,9 @@ export function useDesktopState() {
 
       if (
         currentConfig.reasoningEffort &&
-        REASONING_EFFORT_OPTIONS.includes(currentConfig.reasoningEffort)
+        REASONING_EFFORT_OPTIONS.includes(currentConfig.reasoningEffort as ReasoningEffort)
       ) {
-        selectedReasoningEffort.value = currentConfig.reasoningEffort
+        selectedReasoningEffort.value = currentConfig.reasoningEffort as ReasoningEffort
       }
       selectedSpeedMode.value = currentConfig.speedMode
     } catch (unknownError) {
@@ -4409,7 +4420,7 @@ export function useDesktopState() {
       if (detail.modelProvider) {
         setThreadModelProviderId(threadId, detail.modelProvider)
       }
-      if (detail.model) {
+      if (detail.model && !normalizeStoredModelId(selectedModelIdByContext.value[threadId])) {
         setThreadModelId(threadId, resolveThreadModelForProvider(threadId, detail.model, detail.modelProvider))
       }
       if (resumedThread) {
@@ -4628,7 +4639,7 @@ export function useDesktopState() {
       } else {
         scheduleAncillaryStateRefresh({
           providerChanged: options.providerChanged,
-          includeProviderModels: false,
+          includeProviderModels: true,
         })
       }
     } catch (unknownError) {
@@ -5078,7 +5089,7 @@ export function useDesktopState() {
     try {
       if (resumedThreadById.value[threadId] !== true) {
         const resumedThread = await resumeThread(threadId)
-        if (resumedThread.model) {
+        if (resumedThread.model && !normalizeStoredModelId(selectedModelIdByContext.value[threadId])) {
           setThreadModelId(threadId, resolveThreadModelForProvider(threadId, resumedThread.model, resumedThread.modelProvider))
         }
         if (resumedThread.modelProvider) {
@@ -5674,6 +5685,7 @@ export function useDesktopState() {
     selectedThreadId,
     availableCollaborationModes,
     availableModelIds,
+    availableModelMetadata,
     selectedCollaborationMode,
     selectedModelId,
     selectedReasoningEffort,

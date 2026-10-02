@@ -1,3 +1,4 @@
+import type { ZenModelMetadata } from '../types/zenModels'
 import {
   fetchRpcMethodCatalog,
   fetchRpcNotificationCatalog,
@@ -158,76 +159,6 @@ export type DirectoryMcpLoginResult = {
   authorizationUrl: string
 }
 
-export type DirectoryComposioStatus = {
-  available: boolean
-  authenticated: boolean
-  cliVersion: string
-  email: string
-  defaultOrgName: string
-  defaultOrgId: string
-  webUrl: string
-  baseUrl: string
-  testUserId: string
-}
-
-export type DirectoryComposioConnection = {
-  id: string
-  wordId: string
-  alias: string
-  status: string
-  authScheme: string
-  createdAt: string
-  updatedAt: string
-  isComposioManaged: boolean
-  isDisabled: boolean
-}
-
-export type DirectoryComposioConnector = {
-  slug: string
-  name: string
-  description: string
-  logoUrl: string
-  latestVersion: string
-  toolsCount: number
-  triggersCount: number
-  isNoAuth: boolean
-  enabled: boolean
-  authModes: string[]
-  activeCount: number
-  totalConnections: number
-  connectionStatuses: string[]
-}
-
-export type DirectoryComposioTool = {
-  slug: string
-  name: string
-  description: string
-}
-
-export type DirectoryComposioConnectorDetail = {
-  connector: DirectoryComposioConnector
-  connections: DirectoryComposioConnection[]
-  tools: DirectoryComposioTool[]
-  dashboardUrl: string
-}
-
-export type DirectoryComposioLinkResult = {
-  status: string
-  message: string
-  connectedAccountId: string
-  redirectUrl: string
-  toolkit: string
-  projectType: string
-}
-
-export type DirectoryComposioLoginResult = {
-  status: string
-  message: string
-  loginUrl: string
-  cliKey: string
-  expiresAt: string
-}
-
 export type ComposerPromptInfo = {
   name: string
   path: string
@@ -235,19 +166,8 @@ export type ComposerPromptInfo = {
   description: string
 }
 
-export type DirectoryComposioInstallResult = {
-  ok: boolean
-  command: string
-  output: string
-}
-
-type DirectoryComposioConnectorPage = {
-  data: DirectoryComposioConnector[]
-  nextCursor: string | null
-  total: number
-}
-
 type ProviderModelsResponse = {
+  models?: ZenModelMetadata[]
   data?: unknown
   exclusive?: unknown
 }
@@ -294,8 +214,76 @@ export type StoredQueuedMessage = {
 
 export type ThreadQueueState = Record<string, StoredQueuedMessage[]>
 
+export const THREAD_GOAL_STATUSES = ['active', 'paused', 'blocked', 'usageLimited', 'budgetLimited', 'complete'] as const
+export type ThreadGoalStatus = typeof THREAD_GOAL_STATUSES[number]
+export type ThreadGoal = {
+  threadId: string
+  objective: string
+  status: ThreadGoalStatus
+  tokenBudget: number | null
+  tokensUsed: number
+  timeUsedSeconds: number
+  createdAt: number
+  updatedAt: number
+}
+
+export type ThreadGoalSetInput = {
+  objective?: string
+  status?: ThreadGoalStatus
+  tokenBudget?: number | null
+}
+
 export type ComposerFileSuggestion = {
   path: string
+}
+
+function normalizeThreadGoal(value: unknown): ThreadGoal | null {
+  const record = asRecord(value)
+  if (!record) return null
+  const threadId = readString(record.threadId)
+  const objective = readString(record.objective)
+  const status = readString(record.status)
+  if (!threadId || objective === null || !status || !(THREAD_GOAL_STATUSES as readonly string[]).includes(status)) return null
+  return {
+    threadId,
+    objective,
+    status: status as ThreadGoalStatus,
+    tokenBudget: readNumber(record.tokenBudget),
+    tokensUsed: readNumber(record.tokensUsed) ?? 0,
+    timeUsedSeconds: readNumber(record.timeUsedSeconds) ?? 0,
+    createdAt: readNumber(record.createdAt) ?? 0,
+    updatedAt: readNumber(record.updatedAt) ?? 0,
+  }
+}
+
+export async function getThreadGoal(threadId: string): Promise<ThreadGoal | null> {
+  const normalizedThreadId = threadId.trim()
+  if (!normalizedThreadId) return null
+  const payload = await callRpc<{ goal?: unknown }>('thread/goal/get', { threadId: normalizedThreadId })
+  if (payload.goal === null || payload.goal === undefined) return null
+  const goal = normalizeThreadGoal(payload.goal)
+  if (!goal) throw new Error('thread/goal/get response was malformed')
+  return goal
+}
+
+export async function setThreadGoal(threadId: string, input: ThreadGoalSetInput): Promise<ThreadGoal> {
+  const normalizedThreadId = threadId.trim()
+  if (!normalizedThreadId) throw new Error('thread/goal/set requires threadId')
+  const params: Record<string, unknown> = { threadId: normalizedThreadId }
+  if (input.objective?.trim()) params.objective = input.objective.trim()
+  if (input.status) params.status = input.status
+  if (Object.prototype.hasOwnProperty.call(input, 'tokenBudget')) params.tokenBudget = input.tokenBudget
+  const payload = await callRpc<{ goal?: unknown }>('thread/goal/set', params)
+  const goal = normalizeThreadGoal(payload.goal)
+  if (!goal) throw new Error('thread/goal/set response was malformed')
+  return goal
+}
+
+export async function clearThreadGoal(threadId: string): Promise<boolean> {
+  const normalizedThreadId = threadId.trim()
+  if (!normalizedThreadId) return false
+  const payload = await callRpc<{ cleared?: unknown }>('thread/goal/clear', { threadId: normalizedThreadId })
+  return payload.cleared === true
 }
 
 const DEFAULT_COLLABORATION_MODE_OPTIONS: CollaborationModeOption[] = [
@@ -1510,12 +1498,43 @@ export type ResumedThread = {
 const RESUME_THREAD_COALESCE_TTL_MS = 30_000
 const recentResumeThreadById = new Map<string, Promise<ResumedThread>>()
 
+function isMissingLegacyCustomEndpointProvider(error: unknown): boolean {
+  return error instanceof Error
+    && /model provider [`']custom_endpoint[`'] not found/iu.test(error.message)
+}
+
+function isThreadOwnedByAnotherWriter(error: unknown): boolean {
+  return error instanceof Error
+    && /thread .+ already has an active writer/iu.test(error.message)
+}
+
 export async function resumeThread(threadId: string): Promise<ResumedThread> {
   const existing = recentResumeThreadById.get(threadId)
   if (existing) return existing
 
   const promise = (async () => {
-    const payload = await callRpc<ThreadResumeResponse>('thread/resume', { threadId })
+    let payload: ThreadResumeResponse | ThreadReadResponse
+    try {
+      payload = await callRpc<ThreadResumeResponse>('thread/resume', { threadId })
+    } catch (error) {
+      if (isThreadOwnedByAnotherWriter(error)) {
+        payload = await callRpc<ThreadReadResponse>('thread/read', { threadId, includeTurns: true })
+      } else {
+        if (!isMissingLegacyCustomEndpointProvider(error)) throw error
+        try {
+          payload = await callRpc<ThreadResumeResponse>('thread/resume', {
+            threadId,
+            // Codex 0.147 removed the legacy custom_endpoint provider name. The
+            // top-level openai_base_url configuration continues to route OpenAI
+            // requests to the configured compatible endpoint.
+            modelProvider: 'openai',
+          })
+        } catch (retryError) {
+          if (!isThreadOwnedByAnotherWriter(retryError)) throw retryError
+          payload = await callRpc<ThreadReadResponse>('thread/read', { threadId, includeTurns: true })
+        }
+      }
+    }
     const startTurnIndex = readThreadTurnStartIndex(payload)
     const messages = normalizeThreadMessagesV2(payload, startTurnIndex)
     return {
@@ -2005,7 +2024,7 @@ export async function setCustomProvider(
   return await response.json() as { ok: boolean }
 }
 
-async function fetchProviderModelIds(providerId?: string): Promise<{ ids: string[], exclusive: boolean } | null> {
+async function fetchProviderModelIds(providerId?: string): Promise<{ ids: string[], exclusive: boolean; models?: ZenModelMetadata[] } | null> {
   try {
     const normalizedProviderId = providerId?.trim() ?? ''
     const url = normalizedProviderId
@@ -2028,6 +2047,7 @@ async function fetchProviderModelIds(providerId?: string): Promise<{ ids: string
           .filter((candidate, index, candidates): candidate is string =>
             candidate.length > 0 && candidates.indexOf(candidate) === index),
         exclusive: providerPayload.exclusive === true,
+        models: providerPayload.models,
       }
     }
   } catch {
@@ -2036,9 +2056,11 @@ async function fetchProviderModelIds(providerId?: string): Promise<{ ids: string
   return null
 }
 
-export async function getAvailableModelIds(options: { includeProviderModels?: boolean; requireProviderModels?: boolean; providerId?: string } = {}): Promise<string[]> {
+export async function getAvailableModelIds(options: { includeProviderModels?: boolean; requireProviderModels?: boolean; providerId?: string; onMetadata?: (models: ZenModelMetadata[]) => void } = {}): Promise<string[]> {
   const shouldIncludeProviderModels = options.includeProviderModels !== false
   const providerModels = shouldIncludeProviderModels ? await fetchProviderModelIds(options.providerId) : null
+
+  options.onMetadata?.(providerModels?.models ?? [])
 
   if (providerModels?.exclusive || options.requireProviderModels) {
     return providerModels?.ids ?? []
@@ -2355,76 +2377,6 @@ export async function startDirectoryMcpLogin(name: string): Promise<DirectoryMcp
   return {
     authorizationUrl: readString(payload.authorizationUrl ?? payload.authorization_url) ?? '',
   }
-}
-
-export async function getDirectoryComposioStatus(): Promise<DirectoryComposioStatus> {
-  const response = await fetch('/codex-api/composio/status')
-  if (!response.ok) {
-    throw new Error(`Failed to load Composio status (${response.status})`)
-  }
-  return await response.json() as DirectoryComposioStatus
-}
-
-export async function listDirectoryComposioConnectors(
-  query = '',
-  cursor: string | null = null,
-  limit = 50,
-): Promise<DirectoryComposioConnectorPage> {
-  const params = new URLSearchParams()
-  if (query.trim()) params.set('query', query.trim())
-  if (cursor) params.set('cursor', cursor)
-  if (limit && Number.isFinite(limit)) params.set('limit', String(Math.max(1, Math.floor(limit))))
-  const suffix = params.toString()
-  const response = await fetch(`/codex-api/composio/connectors${suffix ? `?${suffix}` : ''}`)
-  if (!response.ok) {
-    throw new Error(`Failed to list Composio connectors (${response.status})`)
-  }
-  const payload = await response.json() as DirectoryComposioConnectorPage | { data?: DirectoryComposioConnector[]; nextCursor?: string | null; total?: number }
-  return {
-    data: Array.isArray(payload.data) ? payload.data : [],
-    nextCursor: typeof payload.nextCursor === 'string' && payload.nextCursor.length > 0 ? payload.nextCursor : null,
-    total: typeof payload.total === 'number' && Number.isFinite(payload.total) ? Math.max(0, Math.floor(payload.total)) : 0,
-  }
-}
-
-export async function readDirectoryComposioConnector(slug: string): Promise<DirectoryComposioConnectorDetail> {
-  const response = await fetch(`/codex-api/composio/connector?slug=${encodeURIComponent(slug)}`)
-  if (!response.ok) {
-    throw new Error(`Failed to load Composio connector (${response.status})`)
-  }
-  return await response.json() as DirectoryComposioConnectorDetail
-}
-
-export async function startDirectoryComposioLogin(slug: string): Promise<DirectoryComposioLinkResult> {
-  const response = await fetch('/codex-api/composio/link', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ slug }),
-  })
-  if (!response.ok) {
-    throw new Error(`Failed to start Composio login (${response.status})`)
-  }
-  return await response.json() as DirectoryComposioLinkResult
-}
-
-export async function startDirectoryComposioCliLogin(): Promise<DirectoryComposioLoginResult> {
-  const response = await fetch('/codex-api/composio/login', {
-    method: 'POST',
-  })
-  if (!response.ok) {
-    throw new Error(`Failed to start Composio CLI login (${response.status})`)
-  }
-  return await response.json() as DirectoryComposioLoginResult
-}
-
-export async function installDirectoryComposioCli(): Promise<DirectoryComposioInstallResult> {
-  const response = await fetch('/codex-api/composio/install', {
-    method: 'POST',
-  })
-  if (!response.ok) {
-    throw new Error(`Failed to install Composio CLI (${response.status})`)
-  }
-  return await response.json() as DirectoryComposioInstallResult
 }
 
 export async function getAccountRateLimitsResponse(): Promise<GetAccountRateLimitsResponse> {

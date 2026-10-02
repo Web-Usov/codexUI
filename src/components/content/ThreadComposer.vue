@@ -123,6 +123,31 @@
           </template>
           <div v-else class="thread-composer-file-mention-empty">{{ t('No matching files') }}</div>
         </div>
+        <div v-if="isSlashMentionOpen" class="thread-composer-file-mentions thread-composer-slash-mentions">
+          <template v-if="slashMentionSuggestions.length > 0">
+            <button
+              v-for="(item, index) in slashMentionSuggestions"
+              :key="item.kind === 'command' ? item.name : item.skill.path"
+              class="thread-composer-file-mention-row thread-composer-slash-mention-row"
+              :class="{ 'is-active': index === slashMentionHighlightedIndex }"
+              type="button"
+              @mousedown.prevent="applySlashMention(item)"
+            >
+              <span
+                class="thread-composer-slash-mention-badge"
+                :class="item.kind === 'command' ? `is-${item.name}` : `is-${skillSourceBadge(item.skill).badgeTone}`"
+                aria-hidden="true"
+              >
+                {{ item.kind === 'command' ? '/' : skillSourceBadge(item.skill).badge }}
+              </span>
+              <span class="thread-composer-slash-mention-copy">
+                <span class="thread-composer-slash-mention-name">{{ item.kind === 'command' ? `/${item.name}` : `/${item.skill.displayName || item.skill.name}` }}</span>
+                <span class="thread-composer-slash-mention-desc">{{ item.kind === 'command' ? item.description : item.skill.description }}</span>
+              </span>
+            </button>
+          </template>
+          <div v-else class="thread-composer-file-mention-empty">{{ t('No matching skills or commands') }}</div>
+        </div>
         <textarea
           ref="inputRef"
           v-model="draft"
@@ -295,6 +320,29 @@
             :disabled="isComposerConfigDisabled"
             @update:model-value="onReasoningEffortSelect"
           />
+
+          <button
+            v-if="threadGoal || isGoalModeSelected"
+            class="thread-composer-active-mode is-goal"
+            type="button"
+            :aria-label="threadGoal ? t('Edit goal') : t('Disable goal mode')"
+            :title="threadGoal ? t('Edit goal') : t('Disable goal mode')"
+            @click="threadGoal ? $emit('edit-goal') : disableGoalMode()"
+          >
+            <IconTablerTarget class="thread-composer-active-mode-icon" />
+            <span>{{ t('Goal') }}</span>
+          </button>
+          <button
+            v-if="isPlanModeSelected"
+            class="thread-composer-active-mode is-plan"
+            type="button"
+            :aria-label="t('Disable plan mode')"
+            :title="t('Disable plan mode')"
+            @click="toggleCollaborationMode"
+          >
+            <IconTablerChecklist class="thread-composer-active-mode-icon" />
+            <span>{{ t('Plan') }}</span>
+          </button>
         </template>
 
         <div
@@ -390,6 +438,7 @@
 </template>
 
 <script setup lang="ts">
+import type { ZenModelMetadata } from '../../types/zenModels'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type {
   CollaborationModeKind,
@@ -415,14 +464,21 @@ import {
 } from '../../api/codexGateway'
 import IconTablerArrowUp from '../icons/IconTablerArrowUp.vue'
 import IconTablerBolt from '../icons/IconTablerBolt.vue'
+import IconTablerChecklist from '../icons/IconTablerChecklist.vue'
 import IconTablerFilePencil from '../icons/IconTablerFilePencil.vue'
 import IconTablerFolder from '../icons/IconTablerFolder.vue'
 import IconTablerMaximize from '../icons/IconTablerMaximize.vue'
 import IconTablerMicrophone from '../icons/IconTablerMicrophone.vue'
 import IconTablerMinimize from '../icons/IconTablerMinimize.vue'
 import IconTablerPlayerStopFilled from '../icons/IconTablerPlayerStopFilled.vue'
+import IconTablerTarget from '../icons/IconTablerTarget.vue'
 import ComposerDropdown from './ComposerDropdown.vue'
 import ComposerSearchDropdown from './ComposerSearchDropdown.vue'
+import {
+  buildComposerSubmitText,
+  filterComposerSlashSuggestions,
+  type ComposerSlashSuggestion,
+} from './composerSlashMentions'
 
 type SkillSourceBadge = {
   badge: string
@@ -438,6 +494,7 @@ const props = defineProps<{
   collaborationModes?: CollaborationModeOption[]
   selectedCollaborationMode: CollaborationModeKind
   models: string[]
+  modelMetadata?: ZenModelMetadata[]
   selectedModel: string
   selectedReasoningEffort: ReasoningEffort | ''
   selectedSpeedMode: SpeedMode
@@ -455,6 +512,7 @@ const props = defineProps<{
   dictationClickToToggle?: boolean
   dictationAutoSend?: boolean
   dictationLanguage?: string
+  threadGoal?: { objective: string; status: string } | null
 }>()
 
 export type FileAttachment = { label: string; path: string; fsPath: string }
@@ -487,6 +545,7 @@ const emit = defineEmits<{
   'update:selected-model': [modelId: string]
   'update:selected-reasoning-effort': [effort: ReasoningEffort | '']
   'update:selected-speed-mode': [mode: SpeedMode]
+  'edit-goal': []
 }>()
 const { t } = useUiLanguage()
 
@@ -518,6 +577,7 @@ const PROMPT_OPTION_PREFIX = 'prompt:'
 const draft = ref('')
 const selectedImages = ref<SelectedImage[]>([])
 const selectedSkills = ref<SkillItem[]>([])
+const isGoalModeSelected = ref(false)
 const savedPrompts = ref<ComposerPromptInfo[]>([])
 const fileAttachments = ref<FileAttachment[]>([])
 const folderUploadGroups = ref<FolderUploadGroup[]>([])
@@ -572,6 +632,11 @@ const mentionQuery = ref('')
 const fileMentionSuggestions = ref<ComposerFileSuggestion[]>([])
 const isFileMentionOpen = ref(false)
 const fileMentionHighlightedIndex = ref(0)
+const slashMentionSuggestions = ref<ComposerSlashSuggestion[]>([])
+const isSlashMentionOpen = ref(false)
+const slashMentionStartIndex = ref<number | null>(null)
+const slashMentionQuery = ref('')
+const slashMentionHighlightedIndex = ref(0)
 const isComposerExpanded = ref(false)
 const isDraftOverflowing = ref(false)
 let composerOverflowMeasurementQueued = false
@@ -598,7 +663,15 @@ function formatModelLabel(modelId: string): string {
 }
 
 const modelOptions = computed(() =>
-  props.models.map((modelId) => ({ value: modelId, label: formatModelLabel(modelId) })),
+  props.models.map((modelId) => {
+    const metadata = props.modelMetadata?.find(model => model.id === modelId)
+    return {
+      value: modelId, label: formatModelLabel(modelId),
+      badge: metadata ? metadata.upstreamApi === 'responses' ? 'Responses' : metadata.upstreamApi === 'chat-completions' ? 'Chat' : 'Unknown API' : undefined,
+      disabled: metadata?.supportsTools === false || metadata?.upstreamApi === 'unknown',
+      description: metadata?.supportsTools === false ? 'Not compatible with agent tools' : metadata?.upstreamApi === 'unknown' ? 'No supported API route' : metadata ? 'Automatic routing · SDK-inferred, not access-tested' : undefined,
+    }
+  }),
 )
 const isPlanModeSelected = computed(() => props.selectedCollaborationMode === 'plan')
 
@@ -719,7 +792,7 @@ const placeholderText = computed(() =>
     ? t('Select a thread to send a message')
     : isPlanModeWaitingForModel.value
       ? t('Loading models for plan mode...')
-      : t('Type a message... (@ for files)'),
+      : t('Type a message... (@ for files, / for skills and commands)'),
 )
 const hasSubmitContent = computed(() =>
   draft.value.trim().length > 0 || selectedImages.value.length > 0 || fileAttachments.value.length > 0,
@@ -956,7 +1029,7 @@ function onSubmit(mode: 'steer' | 'queue' = 'steer'): void {
   const text = draft.value.trim()
   if (!canSubmit.value) return
   emit('submit', {
-    text,
+    text: buildComposerSubmitText(text, isGoalModeSelected.value),
     imageUrls: selectedImages.value.map((image) => image.url),
     fileAttachments: [...fileAttachments.value],
     skills: selectedSkills.value.map((s) => ({ name: s.name, path: s.path })),
@@ -968,6 +1041,8 @@ function onSubmit(mode: 'steer' | 'queue' = 'steer'): void {
   folderUploadGroups.value = []
   isAttachMenuOpen.value = false
   closeFileMention()
+  closeSlashMention()
+  isGoalModeSelected.value = false
   if (isAndroid || isMobile.value) {
     inputRef.value?.blur()
     return
@@ -998,6 +1073,7 @@ function replaceDraftState(payload: ComposerDraftPayload): void {
   pendingAttachmentCount.value = 0
   isAttachMenuOpen.value = false
   closeFileMention()
+  closeSlashMention()
   attachmentSessionToken += 1
 }
 
@@ -1128,7 +1204,13 @@ function onModelSelect(value: string): void {
 }
 
 function toggleCollaborationMode(): void {
+  if (!isPlanModeSelected.value) isGoalModeSelected.value = false
   emit('update:selected-collaboration-mode', isPlanModeSelected.value ? 'default' : 'plan')
+}
+
+function disableGoalMode(): void {
+  isGoalModeSelected.value = false
+  void nextTick(() => inputRef.value?.focus())
 }
 
 function onReasoningEffortSelect(value: string): void {
@@ -1549,6 +1631,7 @@ function onInputChange(): void {
   }
   queueComposerOverflowMeasurement()
   updateFileMentionState()
+  updateSlashMentionState()
 }
 
 function onInputKeydown(event: KeyboardEvent): void {
@@ -1586,6 +1669,40 @@ function onInputKeydown(event: KeyboardEvent): void {
     }
   }
 
+  if (isSlashMentionOpen.value) {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      closeSlashMention()
+      return
+    }
+    if (event.key === 'ArrowDown') {
+      event.preventDefault()
+      if (slashMentionSuggestions.value.length > 0) {
+        slashMentionHighlightedIndex.value =
+          (slashMentionHighlightedIndex.value + 1) % slashMentionSuggestions.value.length
+      }
+      return
+    }
+    if (event.key === 'ArrowUp') {
+      event.preventDefault()
+      if (slashMentionSuggestions.value.length > 0) {
+        const size = slashMentionSuggestions.value.length
+        slashMentionHighlightedIndex.value = (slashMentionHighlightedIndex.value + size - 1) % size
+      }
+      return
+    }
+    if (event.key === 'Enter' || event.key === 'Tab') {
+      event.preventDefault()
+      const selected = slashMentionSuggestions.value[slashMentionHighlightedIndex.value]
+      if (selected) {
+        applySlashMention(selected)
+      } else {
+        closeSlashMention()
+      }
+      return
+    }
+  }
+
   const shouldSend = props.sendWithEnter !== false
     ? event.key === 'Enter' && !event.shiftKey
     : event.key === 'Enter' && (event.metaKey || event.ctrlKey)
@@ -1602,6 +1719,14 @@ function closeFileMention(): void {
   mentionQuery.value = ''
   fileMentionSuggestions.value = []
   fileMentionHighlightedIndex.value = 0
+}
+
+function closeSlashMention(): void {
+  isSlashMentionOpen.value = false
+  slashMentionStartIndex.value = null
+  slashMentionQuery.value = ''
+  slashMentionSuggestions.value = []
+  slashMentionHighlightedIndex.value = 0
 }
 
 function updateFileMentionState(): void {
@@ -1625,6 +1750,28 @@ function updateFileMentionState(): void {
   mentionQuery.value = mentionToken.slice(1)
   isFileMentionOpen.value = true
   void queueFileMentionSearch()
+}
+
+function updateSlashMentionState(): void {
+  const input = inputRef.value
+  if (!input) {
+    closeSlashMention()
+    return
+  }
+  const cursor = input.selectionStart ?? draft.value.length
+  const beforeCursor = draft.value.slice(0, cursor)
+  const match = beforeCursor.match(/(^|\s)(\/[^\s/]*)$/u)
+  if (!match) {
+    closeSlashMention()
+    return
+  }
+
+  const slashToken = match[2] ?? ''
+  slashMentionStartIndex.value = cursor - slashToken.length
+  slashMentionQuery.value = slashToken.slice(1)
+  isSlashMentionOpen.value = true
+  slashMentionHighlightedIndex.value = 0
+  slashMentionSuggestions.value = filterComposerSlashSuggestions(props.skills ?? [], slashMentionQuery.value, 20)
 }
 
 async function queueFileMentionSearch(): Promise<void> {
@@ -1661,6 +1808,39 @@ function applyFileMention(suggestion: ComposerFileSuggestion): void {
   addFileAttachment(suggestion.path)
   closeFileMention()
   nextTick(() => input?.focus())
+}
+
+function applySlashMention(suggestion: ComposerSlashSuggestion): void {
+  const input = inputRef.value
+  const start = slashMentionStartIndex.value
+  if (start === null) {
+    closeSlashMention()
+    return
+  }
+
+  const cursor = input?.selectionStart ?? draft.value.length
+  const before = draft.value.slice(0, start)
+  const after = draft.value.slice(cursor)
+  if (suggestion.kind === 'skill') {
+    draft.value = `${before}${after}`.trimEnd()
+    if (!selectedSkills.value.some((skill) => skill.path === suggestion.skill.path)) {
+      selectedSkills.value = [...selectedSkills.value, suggestion.skill]
+    }
+  } else if (suggestion.name === 'goal') {
+    draft.value = `${before}${after}`.trimEnd()
+    isGoalModeSelected.value = !isGoalModeSelected.value
+    if (isGoalModeSelected.value && isPlanModeSelected.value) toggleCollaborationMode()
+  } else {
+    draft.value = `${before}${after}`.trimEnd()
+    toggleCollaborationMode()
+  }
+
+  const selectionIndex = start
+  closeSlashMention()
+  nextTick(() => {
+    input?.focus()
+    input?.setSelectionRange(selectionIndex, selectionIndex)
+  })
 }
 
 function hydrateDraft(payload: ComposerDraftPayload): void {
@@ -1867,6 +2047,16 @@ watch(
       void queueFileMentionSearch()
     }
   },
+)
+
+watch(
+  () => props.skills,
+  () => {
+    if (!isSlashMentionOpen.value) return
+    slashMentionSuggestions.value = filterComposerSlashSuggestions(props.skills ?? [], slashMentionQuery.value, 20)
+    slashMentionHighlightedIndex.value = 0
+  },
+  { deep: true },
 )
 
 watch(
@@ -2093,6 +2283,54 @@ watch(
   @apply px-2 py-1.5 text-xs text-zinc-500;
 }
 
+.thread-composer-slash-mentions {
+  @apply pb-1;
+}
+
+.thread-composer-slash-mention-row {
+  @apply items-start;
+}
+
+.thread-composer-slash-mention-badge {
+  @apply inline-flex h-5 min-w-5 items-center justify-center rounded px-1 text-[9px] font-semibold leading-none;
+}
+
+.thread-composer-slash-mention-badge.is-goal {
+  @apply bg-violet-50 text-violet-700;
+}
+
+.thread-composer-slash-mention-badge.is-plan {
+  @apply bg-blue-50 text-blue-700;
+}
+
+.thread-composer-slash-mention-badge.is-repo {
+  @apply bg-sky-50 text-sky-700;
+}
+
+.thread-composer-slash-mention-badge.is-system {
+  @apply bg-zinc-100 text-zinc-700;
+}
+
+.thread-composer-slash-mention-badge.is-plugin {
+  @apply bg-amber-50 text-amber-700;
+}
+
+.thread-composer-slash-mention-badge.is-user {
+  @apply bg-emerald-50 text-emerald-700;
+}
+
+.thread-composer-slash-mention-copy {
+  @apply min-w-0 flex flex-col overflow-hidden;
+}
+
+.thread-composer-slash-mention-name {
+  @apply truncate text-zinc-900;
+}
+
+.thread-composer-slash-mention-desc {
+  @apply mt-0.5 block overflow-hidden text-ellipsis whitespace-nowrap text-[11px] text-zinc-500;
+}
+
 .thread-composer-input {
   @apply w-full min-w-0 min-h-10 sm:min-h-11 max-h-40 rounded-xl border-0 bg-transparent px-1 py-2 pr-10 text-sm text-zinc-900 outline-none transition resize-none overflow-y-auto;
 }
@@ -2212,6 +2450,39 @@ watch(
 
 .thread-composer-control :deep(.composer-dropdown-value) {
   @apply truncate;
+}
+
+.thread-composer-active-mode {
+  @apply inline-flex h-8 shrink-0 items-center gap-1 rounded-full border px-2 text-xs font-medium transition;
+}
+
+.thread-composer-active-mode.is-goal {
+  @apply border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100;
+}
+
+.thread-composer-active-mode.is-plan {
+  @apply border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100;
+}
+
+.thread-composer-active-mode-icon {
+  @apply h-4 w-4;
+}
+
+:global(:root.dark) .thread-composer-file-mention-row.is-active {
+  background: rgb(63 63 70) !important;
+  color: rgb(244 244 245) !important;
+}
+
+:global(:root.dark) .thread-composer-active-mode.is-goal {
+  border-color: rgb(109 40 217) !important;
+  background: rgb(46 16 101 / 0.7) !important;
+  color: rgb(221 214 254) !important;
+}
+
+:global(:root.dark) .thread-composer-active-mode.is-plan {
+  border-color: rgb(29 78 216) !important;
+  background: rgb(23 37 84 / 0.75) !important;
+  color: rgb(191 219 254) !important;
 }
 
 

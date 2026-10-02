@@ -7,6 +7,7 @@
 - [entities/codex-web-local.md](./entities/codex-web-local.md): project identity, stack, and operational profile.
 
 ## Concepts
+- [concepts/composer-slash-menu.md](./concepts/composer-slash-menu.md): slash-triggered skill discovery plus `/goal` and `/plan` composer actions.
 - [concepts/integrated-terminal.md](./concepts/integrated-terminal.md): Codex.app-style integrated xterm/PTY terminal architecture, edge cases, and verification.
 - [concepts/directory-hub-composio-skills.md](./concepts/directory-hub-composio-skills.md): Directory Hub tab routing, Composio connector behavior, Skills search/install semantics, and edge-case testing.
 - [concepts/merge-to-main-workflow.md](./concepts/merge-to-main-workflow.md): branch integration and conflict-resolution workflow.
@@ -18,6 +19,7 @@
 - [concepts/project-zip-portability.md](./concepts/project-zip-portability.md): project ZIP export/import, chat JSONL portability, and local-only security posture.
 
 ## Sources
+- [../raw/features/composer-slash-menu.md](../raw/features/composer-slash-menu.md): source facts for slash-triggered skills and goal/plan command behavior.
 - [../raw/features/integrated-terminal.md](../raw/features/integrated-terminal.md): source facts for the integrated terminal implementation and follow-up tests.
 - [../raw/features/directory-hub-composio-skills-search.md](../raw/features/directory-hub-composio-skills-search.md): source facts for Directory Hub, Composio connectors, Skills search/install, and edge-case tests.
 - [../raw/features/realtime-chat-rendering-inline-media.md](../raw/features/realtime-chat-rendering-inline-media.md): source facts for realtime chat rendering and inline media sanitization.
@@ -28,6 +30,8 @@
 - [../raw/features/manual-test-domain-folders.md](../raw/features/manual-test-domain-folders.md): source facts for the manual test documentation split into domain folders.
 - [../raw/projects/codex-web-local.md](../raw/projects/codex-web-local.md): immutable source snapshot for project facts.
 - [../raw/fixes/codex-thread-link-pr174.md](../raw/fixes/codex-thread-link-pr174.md): source facts for PR #174 chat link parsing fixes, review-bot findings, and dynamic-origin thread URLs.
+- [../raw/fixes/composer-slash-mode-toggles.md](../raw/fixes/composer-slash-mode-toggles.md): follow-up source for command-first ordering, active mode buttons, and dark selected-row styling.
+- [../raw/fixes/persisted-thread-goal-editor.md](../raw/fixes/persisted-thread-goal-editor.md): persisted thread goal hydration, editing, clearing, and composer visibility.
 - [../raw/fixes/opencode-zen-big-pickle-codex-cli.md](../raw/fixes/opencode-zen-big-pickle-codex-cli.md): Big Pickle + Codex CLI fix details.
 - [../raw/fixes/opencode-zen-reasoning-content-proxy.md](../raw/fixes/opencode-zen-reasoning-content-proxy.md): Codex Web Local Zen proxy reasoning_content round-trip fix and Docker verification.
 - [../raw/fixes/opencode-zen-docker-auth-provider-models.md](../raw/fixes/opencode-zen-docker-auth-provider-models.md): Docker auth/no-auth provider switching, first-turn live-state materialization, and provider-model loading fixes.
