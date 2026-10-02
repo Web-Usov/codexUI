@@ -71,6 +71,30 @@ export type UnifiedProxyOptions = {
   responsesPayloadFormat?: 'raw' | 'chat'
   sanitizeResponsesRequest?: (payload: Record<string, unknown>) => Record<string, unknown>
   upstreamHeaders?: (payload: string) => Record<string, string>
+  requestOverrides?: Record<string, unknown>
+}
+
+const RESERVED_REQUEST_OVERRIDE_KEYS = new Set([
+  'model',
+  'input',
+  'messages',
+  'instructions',
+  'tools',
+  'tool_choice',
+  'stream',
+])
+
+export function applyRequestOverrides(
+  payload: Record<string, unknown>,
+  overrides?: Record<string, unknown>,
+): Record<string, unknown> {
+  if (!overrides || Object.keys(overrides).length === 0) return payload
+  const merged = { ...payload }
+  for (const [key, value] of Object.entries(overrides)) {
+    if (RESERVED_REQUEST_OVERRIDE_KEYS.has(key)) continue
+    merged[key] = value
+  }
+  return merged
 }
 
 function readRequestBody(req: IncomingMessage): Promise<Buffer> {
@@ -538,7 +562,10 @@ export function handleUnifiedResponsesProxyRequest(
         const chatToolChoice = responsesToolChoiceToChatToolChoice(parsedBody.tool_choice)
         if (chatTools) chatReq.tools = chatTools
         if (chatToolChoice) chatReq.tool_choice = chatToolChoice
-        payload = JSON.stringify(chatReq)
+        payload = JSON.stringify(applyRequestOverrides(
+          chatReq as unknown as Record<string, unknown>,
+          options.requestOverrides,
+        ))
         upstreamUrl = new URL(options.chatCompletionsEndpoint)
       } else {
         const requestBody =
@@ -546,7 +573,7 @@ export function handleUnifiedResponsesProxyRequest(
             ? { ...(parsedBody as Record<string, unknown>) }
             : {}
         const sanitized = options.sanitizeResponsesRequest ? options.sanitizeResponsesRequest(requestBody) : requestBody
-        payload = JSON.stringify(sanitized)
+        payload = JSON.stringify(applyRequestOverrides(sanitized, options.requestOverrides))
         upstreamUrl = new URL(options.responsesEndpoint)
       }
 

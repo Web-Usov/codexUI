@@ -12,6 +12,7 @@ export function handleCustomEndpointProxyRequest(
     baseUrl: string
     bearerToken: string
     wireApi: 'responses' | 'chat'
+    requestOverrides?: Record<string, unknown>
   },
 ): void {
   handleUnifiedResponsesProxyRequest(req, res, {
@@ -21,5 +22,6 @@ export function handleCustomEndpointProxyRequest(
     chatCompletionsEndpoint: joinEndpoint(options.baseUrl, '/chat/completions'),
     missingKeyMessage: 'Missing custom endpoint API key',
     allowToolFallbackToResponses: false,
+    requestOverrides: options.requestOverrides,
   })
 }

@@ -167,6 +167,7 @@ export interface FreeModeState {
   provider?: 'openrouter' | 'custom' | 'opencode-zen'
   customBaseUrl?: string
   wireApi?: WireApi
+  customRequestOverrides?: Record<string, unknown>
   providerKeys?: Record<string, string>
 }
 

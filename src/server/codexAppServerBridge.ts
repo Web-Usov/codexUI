@@ -7083,13 +7083,15 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
         let bearerToken = ''
         let wireApi: 'responses' | 'chat' = 'responses'
         let baseUrl = ''
+        let requestOverrides: Record<string, unknown> = {}
         try {
           const state = ensureDefaultFreeModeStateForMissingAuthSync(statePath)
           bearerToken = state?.apiKey ?? ''
           wireApi = state?.wireApi === 'chat' ? 'chat' : 'responses'
           baseUrl = state?.customBaseUrl ?? ''
+          requestOverrides = state?.customRequestOverrides ?? {}
         } catch { /* use empty */ }
-        handleCustomEndpointProxyRequest(req, res, { baseUrl, bearerToken, wireApi })
+        handleCustomEndpointProxyRequest(req, res, { baseUrl, bearerToken, wireApi, requestOverrides })
         return
       }
 
@@ -7204,6 +7206,7 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
               maskedKey,
               provider: state.provider ?? 'openrouter',
               customBaseUrl: state.customBaseUrl ?? null,
+              customRequestOverrides: state.customRequestOverrides ?? {},
               wireApi,
             })
           } catch (error) {
@@ -7273,6 +7276,18 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
             const baseUrl = typeof body?.baseUrl === 'string' ? body.baseUrl.trim() : ''
             const apiKey = typeof body?.apiKey === 'string' ? body.apiKey.trim() : ''
             const wireApi = body?.wireApi === 'chat' ? 'chat' as const : 'responses' as const
+            let requestOverrides: Record<string, unknown> | undefined
+            if (body && Object.prototype.hasOwnProperty.call(body, 'requestOverrides')) {
+              const candidate = body.requestOverrides
+              if (candidate == null) {
+                requestOverrides = {}
+              } else if (typeof candidate !== 'object' || Array.isArray(candidate)) {
+                setJson(res, 400, { error: 'requestOverrides must be a JSON object' })
+                return
+              } else {
+                requestOverrides = { ...(candidate as Record<string, unknown>) }
+              }
+            }
             const providerType = body?.provider === 'opencode-zen'
               ? 'opencode-zen' as const
               : body?.provider === 'openrouter'
@@ -7307,6 +7322,9 @@ export function createCodexBridgeMiddleware(): CodexBridgeMiddleware {
               provider: providerType,
               customBaseUrl: providerType === 'custom' ? baseUrl : undefined,
               wireApi,
+              customRequestOverrides: providerType === 'custom'
+                ? (requestOverrides ?? current.customRequestOverrides ?? {})
+                : current.customRequestOverrides,
               providerKeys: prevKeys,
             }
             await writeFreeModeStateFile(statePath, state)
