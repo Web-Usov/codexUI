@@ -269,3 +269,120 @@ describe('unified responses proxy reasoning_content translation', () => {
     }
   })
 })
+
+describe('unified responses proxy request overrides', () => {
+  it('applies custom request overrides to Responses payloads while protecting structural fields', async () => {
+    let upstreamRequest: Record<string, unknown> | null = null
+    const upstream = createServer((req, res) => {
+      const chunks: Buffer[] = []
+      req.on('data', (chunk: Buffer) => chunks.push(chunk))
+      req.on('end', () => {
+        upstreamRequest = JSON.parse(Buffer.concat(chunks).toString()) as Record<string, unknown>
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ id: 'resp-test', output: [] }))
+      })
+    })
+    const upstreamPort = await listen(upstream)
+
+    const proxy = createServer((req, res) => {
+      handleUnifiedResponsesProxyRequest(req, res, {
+        bearerToken: '',
+        requireBearerToken: false,
+        wireApi: 'responses',
+        responsesEndpoint: `http://127.0.0.1:${upstreamPort}/v1/responses`,
+        chatCompletionsEndpoint: `http://127.0.0.1:${upstreamPort}/v1/chat/completions`,
+        missingKeyMessage: 'missing',
+        allowToolFallbackToResponses: false,
+        requestOverrides: {
+          temperature: 0.2,
+          reasoning_effort: 'none',
+          model: 'must-not-replace-model',
+          input: 'must-not-replace-input',
+          stream: false,
+        },
+      })
+    })
+    const proxyPort = await listen(proxy)
+
+    try {
+      const originalInput = [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] }]
+      const response = await fetch(`http://127.0.0.1:${proxyPort}/v1/responses`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'qwen-test',
+          input: originalInput,
+          stream: true,
+        }),
+      })
+
+      expect(response.status).toBe(200)
+      expect(upstreamRequest).toMatchObject({
+        model: 'qwen-test',
+        input: originalInput,
+        stream: true,
+        temperature: 0.2,
+        reasoning_effort: 'none',
+      })
+    } finally {
+      await close(proxy)
+      await close(upstream)
+    }
+  })
+
+  it('applies custom request overrides after Responses-to-Chat translation', async () => {
+    let upstreamRequest: Record<string, unknown> | null = null
+    const upstream = createServer((req, res) => {
+      const chunks: Buffer[] = []
+      req.on('data', (chunk: Buffer) => chunks.push(chunk))
+      req.on('end', () => {
+        upstreamRequest = JSON.parse(Buffer.concat(chunks).toString()) as Record<string, unknown>
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({
+          id: 'chatcmpl-test',
+          created: 123,
+          choices: [{ message: { role: 'assistant', content: 'ok' } }],
+        }))
+      })
+    })
+    const upstreamPort = await listen(upstream)
+
+    const proxy = createServer((req, res) => {
+      handleUnifiedResponsesProxyRequest(req, res, {
+        bearerToken: '',
+        requireBearerToken: false,
+        wireApi: 'chat',
+        responsesEndpoint: `http://127.0.0.1:${upstreamPort}/v1/responses`,
+        chatCompletionsEndpoint: `http://127.0.0.1:${upstreamPort}/v1/chat/completions`,
+        missingKeyMessage: 'missing',
+        allowToolFallbackToResponses: false,
+        requestOverrides: {
+          temperature: 0.2,
+          reasoning_effort: 'none',
+          messages: [{ role: 'user', content: 'must-not-replace-messages' }],
+        },
+      })
+    })
+    const proxyPort = await listen(proxy)
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${proxyPort}/v1/responses`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'qwen-test',
+          input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] }],
+        }),
+      })
+
+      expect(response.status).toBe(200)
+      const capturedRequest = upstreamRequest as Record<string, unknown> | null
+      expect(capturedRequest?.temperature).toBe(0.2)
+      expect(capturedRequest?.reasoning_effort).toBe('none')
+      expect(capturedRequest?.messages).toEqual([{ role: 'user', content: 'hi' }])
+    } finally {
+      await close(proxy)
+      await close(upstream)
+    }
+  })
+})

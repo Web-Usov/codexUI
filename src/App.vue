@@ -398,6 +398,14 @@
                     @click="saveCustomEndpoint"
                   >{{ freeModeCustomKeySaving ? '...' : t('Save') }}</button>
                 </div>
+                <span class="sidebar-settings-label" style="margin-top: 4px">{{ t('Request overrides (JSON)') }}</span>
+                <textarea
+                  v-model="customEndpointRequestOverrides"
+                  class="sidebar-settings-key-input sidebar-settings-json-input"
+                  rows="4"
+                  spellcheck="false"
+                  :placeholder="'{\n  &quot;temperature&quot;: 0.2,\n  &quot;reasoning_effort&quot;: &quot;none&quot;\n}'"
+                ></textarea>
                 <div class="sidebar-settings-row sidebar-settings-row--select" style="margin-top: 4px; padding: 0">
                   <span class="sidebar-settings-label">{{ t('API format') }}</span>
                   <div class="sidebar-settings-segmented" role="group" :aria-label="t('Custom endpoint API format')">
@@ -1685,6 +1693,7 @@ const providerDropdownOptions = computed(() => [
 const customEndpointUrl = ref('')
 const customEndpointKey = ref('')
 const customEndpointWireApi = ref<'responses' | 'chat'>('responses')
+const customEndpointRequestOverrides = ref('{}')
 const openRouterWireApi = ref<'responses' | 'chat'>('responses')
 const opencodeZenKey = ref('')
 const isTelegramConfigOpen = ref(false)
@@ -4460,6 +4469,7 @@ async function onProviderChange(provider: string): Promise<void> {
       if (customEndpointUrl.value.trim() && customEndpointKey.value.trim()) {
         await setCustomProvider(customEndpointUrl.value.trim(), customEndpointKey.value.trim(), {
           wireApi: customEndpointWireApi.value,
+          requestOverrides: parseCustomEndpointRequestOverrides(),
         })
         freeModeEnabled.value = true
       }
@@ -4473,6 +4483,16 @@ async function onProviderChange(provider: string): Promise<void> {
   }
 }
 
+function parseCustomEndpointRequestOverrides(): Record<string, unknown> {
+  const raw = customEndpointRequestOverrides.value.trim()
+  if (!raw) return {}
+  const parsed = JSON.parse(raw) as unknown
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Request overrides must be a JSON object')
+  }
+  return parsed as Record<string, unknown>
+}
+
 async function saveCustomEndpoint(): Promise<void> {
   if (freeModeCustomKeySaving.value) return
   const url = customEndpointUrl.value.trim()
@@ -4480,9 +4500,12 @@ async function saveCustomEndpoint(): Promise<void> {
   freeModeCustomKeySaving.value = true
   try {
     providerError.value = ''
+    const requestOverrides = parseCustomEndpointRequestOverrides()
     await setCustomProvider(url, customEndpointKey.value.trim(), {
       wireApi: customEndpointWireApi.value,
+      requestOverrides,
     })
+    customEndpointRequestOverrides.value = JSON.stringify(requestOverrides, null, 2)
     freeModeEnabled.value = true
     await refreshAll({ includeSelectedThreadMessages: false, providerChanged: true, awaitAncillaryRefreshes: true })
   } catch (err) {
@@ -4579,6 +4602,7 @@ async function loadFreeModeStatus(): Promise<void> {
         selectedProvider.value = 'custom'
         customEndpointUrl.value = status.customBaseUrl ?? ''
         customEndpointWireApi.value = status.wireApi === 'chat' ? 'chat' : 'responses'
+        customEndpointRequestOverrides.value = JSON.stringify(status.customRequestOverrides ?? {}, null, 2)
       } else {
         selectedProvider.value = 'openrouter'
         openRouterWireApi.value = status.wireApi === 'chat' ? 'chat' : 'responses'
@@ -6096,6 +6120,11 @@ async function loadWorktreeBranches(sourceCwd: string): Promise<void> {
 
 .sidebar-settings-key-input:focus {
   @apply border-zinc-400;
+}
+
+.sidebar-settings-json-input {
+  @apply font-mono leading-relaxed resize-y;
+  min-height: 5.5rem;
 }
 
 .sidebar-settings-key-save {
