@@ -27,6 +27,7 @@ Return to the [manual test index](../../tests.md).
 | [OpenCode Zen Public Client Headers](opencode-zen-public-client-headers.md) |
 | [Custom endpoint Completions via local Responses proxy](custom-endpoint-completions-via-local-responses-proxy.md) |
 | [Custom endpoint request overrides](custom-endpoint-request-overrides.md) |
+| [Custom endpoint forwards Codex thread session](custom-endpoint-forwards-codex-thread-session.md) |
 | [TestChat GLM-5 new-thread model selection](testchat-glm-5-new-thread-model-selection.md) |
 | [Android published CLI loads Codex app-server models through local proxy](android-published-cli-loads-codex-app-server-models-through-local-proxy.md) |
 | [OpenCode Zen status returns current provider models](opencode-zen-status-returns-current-provider-models.md) |
