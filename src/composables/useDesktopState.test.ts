@@ -82,6 +82,7 @@ function installTestWindow(initialStorage: Record<string, string> = {}) {
 beforeEach(() => {
   vi.clearAllMocks()
   gatewayMocks.getThreadQueueState.mockResolvedValue({})
+  gatewayMocks.setThreadQueueState.mockResolvedValue(undefined)
   gatewayMocks.getThreadTitleCache.mockResolvedValue({ titles: {} })
   gatewayMocks.getWorkspaceRootsState.mockRejectedValue(new Error('no workspace roots state'))
 })
