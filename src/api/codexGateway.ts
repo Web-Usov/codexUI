@@ -213,7 +213,7 @@ let cachedWorkspaceRootsState: WorkspaceRootsState | null = null
 export type StoredQueuedMessage = {
   id: string
   model?: string
-  effort?: ReasoningEffort | ''
+  effort?: UiReasoningEffort | ''
   text: string
   imageUrls: string[]
   skills: Array<{ name: string; path: string }>
@@ -1496,7 +1496,7 @@ export async function removeAccount(storageId: string): Promise<AccountsListResu
 
 export type ResumedThread = {
   model: string
-  reasoningEffort: ReasoningEffort | ''
+  reasoningEffort: UiReasoningEffort | ''
   modelProvider: string
   messages: UiMessage[]
   inProgress: boolean
@@ -1549,7 +1549,7 @@ export async function resumeThread(threadId: string): Promise<ResumedThread> {
     const messages = normalizeThreadMessagesV2(payload, startTurnIndex)
     return {
       model: normalizeThreadModelFromPayload(payload),
-      reasoningEffort: normalizeReasoningEffort((payload as { reasoningEffort?: unknown }).reasoningEffort),
+      reasoningEffort: normalizeReasoningEffort((payload as { reasoningEffort?: unknown }).reasoningEffort) as UiReasoningEffort | '',
       modelProvider: normalizeThreadModelProviderFromPayload(payload),
       messages,
       inProgress: readThreadInProgressFromResponse(payload),
@@ -2540,7 +2540,7 @@ function normalizeStoredQueuedMessage(value: unknown): StoredQueuedMessage | nul
     skills,
     fileAttachments,
     model: typeof record.model === 'string' ? record.model.trim() : '',
-    effort: normalizeReasoningEffort(record.effort),
+    effort: normalizeReasoningEffort(record.effort) as UiReasoningEffort | '',
     collaborationMode: record.collaborationMode === 'plan' ? 'plan' : 'default',
   }
 }
