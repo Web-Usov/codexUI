@@ -36,6 +36,7 @@ import {
   type RpcNotification,
   type SkillInfo,
   type ThreadQueueState,
+  type ModelReasoningMetadata,
   type WorkspaceRootsState,
 } from '../api/codexGateway'
 import { CodexApiError } from '../api/codexErrors'
@@ -78,6 +79,7 @@ const THREAD_TOKEN_USAGE_STORAGE_KEY = 'codex-web-local.thread-token-usage.v1'
 const THREAD_TERMINAL_OPEN_STORAGE_KEY = 'codex-web-local.thread-terminal-open.v1'
 const SELECTED_THREAD_STORAGE_KEY = 'codex-web-local.selected-thread-id.v1'
 const SELECTED_MODEL_BY_CONTEXT_STORAGE_KEY = 'codex-web-local.selected-model-by-context.v1'
+const SELECTED_REASONING_BY_CONTEXT_STORAGE_KEY = 'codex-web-local.selected-reasoning-by-context.v1'
 const LEGACY_SELECTED_MODEL_STORAGE_KEY = 'codex-web-local.selected-model-id.v1'
 const PROJECT_ORDER_STORAGE_KEY = 'codex-web-local.project-order.v1'
 const PROJECT_DISPLAY_NAME_STORAGE_KEY = 'codex-web-local.project-display-name.v1'
@@ -287,6 +289,42 @@ function saveSelectedModelMap(state: Record<string, string>): void {
     window.localStorage.removeItem(LEGACY_SELECTED_MODEL_STORAGE_KEY)
   } catch {
     // Keep in-memory selection working even if localStorage writes fail.
+  }
+}
+
+function loadSelectedReasoningEffortMap(): Record<string, ReasoningEffort> {
+  const result = createStringKeyedRecord<ReasoningEffort>()
+  if (typeof window === 'undefined') return result
+  try {
+    const raw = window.localStorage.getItem(SELECTED_REASONING_BY_CONTEXT_STORAGE_KEY)
+    if (!raw) return result
+    const parsed = JSON.parse(raw) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return result
+    for (const [contextId, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (contextId && typeof value === 'string' && REASONING_EFFORT_OPTIONS.includes(value as ReasoningEffort)) {
+        result[contextId] = value as ReasoningEffort
+      }
+    }
+  } catch {
+    // Ignore invalid or inaccessible browser storage.
+  }
+  return result
+}
+
+function readSelectedReasoningEffort(state: Record<string, ReasoningEffort>, threadId: string): ReasoningEffort | '' {
+  return state[toThreadContextId(threadId)] ?? state[NEW_THREAD_COLLABORATION_MODE_CONTEXT] ?? ''
+}
+
+function saveSelectedReasoningEffortMap(state: Record<string, ReasoningEffort>): void {
+  if (typeof window === 'undefined') return
+  try {
+    if (Object.keys(state).length === 0) {
+      window.localStorage.removeItem(SELECTED_REASONING_BY_CONTEXT_STORAGE_KEY)
+    } else {
+      window.localStorage.setItem(SELECTED_REASONING_BY_CONTEXT_STORAGE_KEY, JSON.stringify(state))
+    }
+  } catch {
+    // Keep in-memory selection working if storage is unavailable.
   }
 }
 
@@ -1408,6 +1446,8 @@ export function useDesktopState() {
     imageUrls: string[]
     skills: Array<{ name: string; path: string }>
     fileAttachments: FileAttachment[]
+    model?: string
+    effort?: ReasoningEffort | ''
     collaborationMode: CollaborationModeKind
   }
   type PendingTurnRequest = {
@@ -1425,6 +1465,7 @@ export function useDesktopState() {
   const eventUnreadByThreadId = ref<Record<string, boolean>>({})
   const availableModelIds = ref<string[]>([])
   const availableModelMetadata = ref<ZenModelMetadata[]>([])
+  const availableModelReasoningMetadata = ref<ModelReasoningMetadata[]>([])
   const availableCollaborationModes = ref<CollaborationModeOption[]>([
     { value: 'default', label: 'Default' },
     { value: 'plan', label: 'Plan' },
@@ -1437,7 +1478,10 @@ export function useDesktopState() {
     readSelectedCollaborationMode(selectedCollaborationModeByContext.value, selectedThreadId.value),
   )
   const selectedModelId = ref(readSelectedModel(selectedModelIdByContext.value, selectedThreadId.value))
-  const selectedReasoningEffort = ref<ReasoningEffort | ''>('medium')
+  const selectedReasoningEffortByContext = ref<Record<string, ReasoningEffort>>(loadSelectedReasoningEffortMap())
+  const selectedReasoningEffort = ref<ReasoningEffort | ''>(
+    readSelectedReasoningEffort(selectedReasoningEffortByContext.value, selectedThreadId.value) || 'medium',
+  )
   const selectedSpeedMode = ref<SpeedMode>('standard')
   const activeProviderId = ref('')
   const codexCliMissingError = ref('')
@@ -1683,6 +1727,8 @@ export function useDesktopState() {
       saveSelectedThreadId(nextThreadId)
     }
     selectedModelId.value = readProviderCompatibleSelectedModel(readModelIdForThread(nextThreadId))
+    selectedReasoningEffort.value = readSelectedReasoningEffort(selectedReasoningEffortByContext.value, nextThreadId) || 'medium'
+    ensureSelectedReasoningEffortSupported()
     selectedCollaborationMode.value = readSelectedCollaborationMode(
       selectedCollaborationModeByContext.value,
       nextThreadId,
@@ -1721,6 +1767,7 @@ export function useDesktopState() {
       ensureAvailableModelIds(normalizedModelId)
     }
     saveSelectedModelMap(selectedModelIdByContext.value)
+    if (threadId.trim() === selectedThreadId.value) ensureSelectedReasoningEffortSupported()
   }
 
   function setSelectedModelId(modelId: string): void {
@@ -1927,11 +1974,31 @@ export function useDesktopState() {
     }
   }
 
-  function setSelectedReasoningEffort(effort: ReasoningEffort | ''): void {
-    if (effort && !REASONING_EFFORT_OPTIONS.includes(effort)) {
-      return
+  function setSelectedReasoningEffortForThread(threadId: string, effort: ReasoningEffort | ''): void {
+    if (effort && !REASONING_EFFORT_OPTIONS.includes(effort)) return
+    const contextId = toThreadContextId(threadId)
+    const nextMap = cloneStringKeyedRecord(selectedReasoningEffortByContext.value)
+    if (effort) nextMap[contextId] = effort
+    else delete nextMap[contextId]
+    selectedReasoningEffortByContext.value = nextMap
+    if (threadId.trim() === selectedThreadId.value) {
+      selectedReasoningEffort.value = readSelectedReasoningEffort(nextMap, threadId) || 'medium'
     }
-    selectedReasoningEffort.value = effort
+    saveSelectedReasoningEffortMap(nextMap)
+  }
+
+  function setSelectedReasoningEffort(effort: ReasoningEffort | ''): void {
+    setSelectedReasoningEffortForThread(selectedThreadId.value, effort)
+  }
+
+  function ensureSelectedReasoningEffortSupported(): void {
+    const metadata = availableModelReasoningMetadata.value.find((row) => row.id === readModelIdForThread(selectedThreadId.value))
+    if (!metadata || metadata.supportedReasoningEfforts.length === 0) return
+    if (selectedReasoningEffort.value && metadata.supportedReasoningEfforts.includes(selectedReasoningEffort.value)) return
+    const fallback = metadata.defaultReasoningEffort && metadata.supportedReasoningEfforts.includes(metadata.defaultReasoningEffort)
+      ? metadata.defaultReasoningEffort
+      : metadata.supportedReasoningEfforts[0]
+    if (fallback) setSelectedReasoningEffort(fallback)
   }
 
   async function updateSelectedSpeedMode(mode: SpeedMode): Promise<void> {
@@ -1994,14 +2061,17 @@ export function useDesktopState() {
       const targetProviderId = readProviderIdForThread(selectedThreadId.value)
       const isProviderBacked = targetProviderId !== 'codex'
       let metadata: ZenModelMetadata[] = []
+      let reasoningMetadata: ModelReasoningMetadata[] = []
       const modelIds = await getAvailableModelIds({
         includeProviderModels: isProviderBacked || options?.includeProviderModels !== false,
         requireProviderModels: isProviderBacked,
         providerId: isProviderBacked ? targetProviderId : undefined,
         onMetadata: models => { metadata = models },
+        onReasoningMetadata: models => { reasoningMetadata = models },
       })
       if (generation !== modelRefreshGeneration || refreshThreadId !== selectedThreadId.value) return
       availableModelMetadata.value = metadata
+      availableModelReasoningMetadata.value = reasoningMetadata
       const normalizedSelectedModelId = readModelIdForThread(refreshThreadId)
       const providerModelContextId = toProviderModelContextId(targetProviderId)
       const providerScopedModelId = providerModelContextId
@@ -2054,12 +2124,13 @@ export function useDesktopState() {
         saveSelectedModelMap(selectedModelIdByContext.value)
       }
 
-      if (
-        currentConfig.reasoningEffort &&
-        REASONING_EFFORT_OPTIONS.includes(currentConfig.reasoningEffort as ReasoningEffort)
-      ) {
+      // config/read is a default, never a replacement for a thread/user preference.
+      if (!readSelectedReasoningEffort(selectedReasoningEffortByContext.value, refreshThreadId)
+        && currentConfig.reasoningEffort
+        && REASONING_EFFORT_OPTIONS.includes(currentConfig.reasoningEffort as ReasoningEffort)) {
         selectedReasoningEffort.value = currentConfig.reasoningEffort as ReasoningEffort
       }
+      ensureSelectedReasoningEffortSupported()
       selectedSpeedMode.value = currentConfig.speedMode
     } catch (unknownError) {
       if (isCodexCliMissingError(unknownError)) {
@@ -2241,6 +2312,12 @@ export function useDesktopState() {
       selectedModelIdByContext.value = nextSelectedModelMap
       selectedModelId.value = readProviderCompatibleSelectedModel(readModelIdForThread(selectedThreadId.value))
       saveSelectedModelMap(nextSelectedModelMap)
+    }
+    const nextSelectedReasoningMap = pruneThreadContextStateMap(selectedReasoningEffortByContext.value, activeThreadIds)
+    if (nextSelectedReasoningMap !== selectedReasoningEffortByContext.value) {
+      selectedReasoningEffortByContext.value = nextSelectedReasoningMap
+      selectedReasoningEffort.value = readSelectedReasoningEffort(nextSelectedReasoningMap, selectedThreadId.value) || 'medium'
+      saveSelectedReasoningEffortMap(nextSelectedReasoningMap)
     }
     const nextSelectedCollaborationModeMap = pruneThreadContextStateMap(
       selectedCollaborationModeByContext.value,
@@ -4202,6 +4279,8 @@ export function useDesktopState() {
           path: attachment.path,
           fsPath: attachment.fsPath,
         })),
+        model: message.model,
+        effort: message.effort,
         collaborationMode: message.collaborationMode,
       }))
     }
@@ -4422,6 +4501,10 @@ export function useDesktopState() {
       }
       if (detail.model && !normalizeStoredModelId(selectedModelIdByContext.value[threadId])) {
         setThreadModelId(threadId, resolveThreadModelForProvider(threadId, detail.model, detail.modelProvider))
+      }
+      if (resumedThread?.reasoningEffort && !selectedReasoningEffortByContext.value[threadId]) {
+        // Existing threads can advertise their active effort independently of config/read.
+        setSelectedReasoningEffortForThread(threadId, resumedThread.reasoningEffort)
       }
       if (resumedThread) {
         resumedThreadById.value = {
@@ -4882,6 +4965,8 @@ export function useDesktopState() {
         imageUrls,
         skills,
         fileAttachments,
+        model: readModelIdForThread(threadId),
+        effort: selectedReasoningEffort.value,
         collaborationMode: collaborationModeOverride === 'plan'
           ? 'plan'
           : collaborationModeOverride === 'default'
@@ -4980,6 +5065,7 @@ export function useDesktopState() {
         setThreadModelId(threadId, startedThread.model)
         setThreadModelProviderId(threadId, startedThread.modelProvider || activeProviderId.value)
         setSelectedCollaborationModeForThread(threadId, selectedMode)
+        setSelectedReasoningEffortForThread(threadId, selectedReasoningEffort.value)
       } catch (unknownError) {
         if (selectedModel && selectedModel !== MODEL_FALLBACK_ID && isUnsupportedChatGptModelError(unknownError)) {
           await applyFallbackModelSelection()
@@ -4988,6 +5074,7 @@ export function useDesktopState() {
           setThreadModelId(threadId, fallbackThread.model)
           setThreadModelProviderId(threadId, fallbackThread.modelProvider || activeProviderId.value)
           setSelectedCollaborationModeForThread(threadId, selectedMode)
+          setSelectedReasoningEffortForThread(threadId, selectedReasoningEffort.value)
         } else {
           throw unknownError
         }
@@ -5664,6 +5751,8 @@ export function useDesktopState() {
     const msg = queue.find((m) => m.id === messageId)
     if (!msg) return
     removeQueuedMessage(messageId)
+    if (msg.model) setSelectedModelIdForThread(threadId, msg.model)
+    if (msg.effort) setSelectedReasoningEffortForThread(threadId, msg.effort)
     setSelectedCollaborationMode(msg.collaborationMode)
     void sendMessageToSelectedThread(msg.text, msg.imageUrls, msg.skills, 'steer', msg.fileAttachments)
   }
@@ -5686,6 +5775,7 @@ export function useDesktopState() {
     availableCollaborationModes,
     availableModelIds,
     availableModelMetadata,
+    availableModelReasoningMetadata,
     selectedCollaborationMode,
     selectedModelId,
     selectedReasoningEffort,
