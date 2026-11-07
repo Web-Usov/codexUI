@@ -33,6 +33,18 @@ describe('startThreadTurn collaboration mode payloads', () => {
     vi.unstubAllGlobals()
   })
 
+  it('forwards High and Extra High to both turn and collaboration-mode settings', async () => {
+    const { requests } = mockRpcFetch()
+
+    await startThreadTurn('thread-1', 'think deeply', [], 'gpt-6.1-sol', 'high', undefined, [], 'default')
+    await startThreadTurn('thread-1', 'think even more', [], 'gpt-6.1-sol', 'xhigh', undefined, [], 'default')
+
+    expect(requests[0].params.effort).toBe('high')
+    expect(requests[1].params.effort).toBe('xhigh')
+    expect((requests[0].params.collaborationMode as { settings: { reasoning_effort: string } }).settings.reasoning_effort).toBe('high')
+    expect((requests[1].params.collaborationMode as { settings: { reasoning_effort: string } }).settings.reasoning_effort).toBe('xhigh')
+  })
+
   it('sends default collaboration mode explicitly after a plan turn', async () => {
     const { requests } = mockRpcFetch()
 
@@ -111,6 +123,31 @@ describe('getAvailableModelIds', () => {
       providerId: 'opencode-zen',
     })).resolves.toEqual(['big-pickle', 'ring-2.6-1t-free'])
     expect(requests).toEqual(['/codex-api/provider-models?provider=opencode-zen'])
+  })
+
+  it('publishes model-specific supported reasoning levels from the Codex catalog', async () => {
+    const onReasoningMetadata = vi.fn()
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      result: {
+        data: [{
+          id: 'gpt-6.1-sol',
+          defaultReasoningEffort: 'medium',
+          supportedReasoningEfforts: [
+            { reasoningEffort: 'medium', description: '' },
+            { reasoningEffort: 'high', description: '' },
+            { reasoningEffort: 'xhigh', description: '' },
+            { reasoningEffort: 'ultra', description: '' },
+          ],
+        }],
+      },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })))
+
+    await expect(getAvailableModelIds({ includeProviderModels: false, onReasoningMetadata })).resolves.toEqual(['gpt-6.1-sol'])
+    expect(onReasoningMetadata).toHaveBeenCalledWith([{
+      id: 'gpt-6.1-sol',
+      defaultReasoningEffort: 'medium',
+      supportedReasoningEfforts: ['medium', 'high', 'xhigh'],
+    }])
   })
 
   it('falls back to model/list when provider models are optional and unavailable', async () => {
