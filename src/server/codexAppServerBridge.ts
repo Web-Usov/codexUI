@@ -5057,6 +5057,8 @@ const THREAD_QUEUE_STATE_KEY = 'thread-queue-state'
 
 type StoredQueuedMessage = {
   id: string
+  model?: string
+  effort?: ReasoningEffort | ''
   text: string
   imageUrls: string[]
   skills: Array<{ name: string; path: string }>
@@ -5117,6 +5119,8 @@ function normalizeStoredQueuedMessage(value: unknown): StoredQueuedMessage | nul
     imageUrls: normalizeStringArray(record.imageUrls),
     skills: normalizeNamedPathItems(record.skills),
     fileAttachments: normalizeFileAttachments(record.fileAttachments),
+    model: readNonEmptyString(record.model),
+    effort: normalizeReasoningEffort(record.effort),
     collaborationMode: record.collaborationMode === 'plan' ? 'plan' : 'default',
   }
 }
@@ -6704,14 +6708,17 @@ export class BackendQueueProcessor {
     if (dedupedFileAttachments.length > 0) {
       params.attachments = dedupedFileAttachments.map((f) => ({ label: f.label, path: f.path, fsPath: f.fsPath }))
     }
+    // Preserve the settings captured when the message entered the queue.
+    if (turn.message.model) params.model = turn.message.model
+    if (turn.message.effort) params.effort = turn.message.effort
 
     try {
       const settings = await this.resolveCollaborationModeSettings(turn.message.collaborationMode)
       params.collaborationMode = {
         mode: turn.message.collaborationMode,
         settings: {
-          model: settings.model,
-          reasoning_effort: settings.reasoningEffort,
+          model: turn.message.model || settings.model,
+          reasoning_effort: turn.message.effort || settings.reasoningEffort,
           developer_instructions: null,
         },
       }
