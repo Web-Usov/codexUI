@@ -436,6 +436,87 @@ describe('collaboration mode selection', () => {
   })
 })
 
+describe('thinking effort preferences', () => {
+  it('keeps Extra High through config refresh, thread switches and a new app instance', async () => {
+    installTestWindow()
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({
+      groups: [{ projectName: 'Project', threads: [thread('thread-1', '/tmp/project'), thread('thread-2', '/tmp/project')] }],
+      nextCursor: null,
+    })
+    gatewayMocks.getAvailableCollaborationModes.mockResolvedValue([{ value: 'default', label: 'Default' }])
+    gatewayMocks.getSkillsList.mockResolvedValue([])
+    gatewayMocks.getAccountRateLimits.mockResolvedValue(null)
+    gatewayMocks.getCurrentModelConfig.mockResolvedValue({
+      model: 'gpt-6.1-sol', providerId: '', reasoningEffort: 'medium', speedMode: 'standard',
+    })
+    gatewayMocks.getAvailableModelIds.mockImplementation(async (options?: { onReasoningMetadata?: (models: unknown[]) => void }) => {
+      options?.onReasoningMetadata?.([{
+        id: 'gpt-6.1-sol', defaultReasoningEffort: 'medium', supportedReasoningEfforts: ['medium', 'high', 'xhigh'],
+      }])
+      return ['gpt-6.1-sol']
+    })
+
+    const state = useDesktopState()
+    state.primeSelectedThread('thread-1')
+    state.setSelectedModelIdForThread('thread-1', 'gpt-6.1-sol')
+    state.setSelectedReasoningEffort('xhigh')
+    await state.refreshAll({ includeSelectedThreadMessages: false, awaitAncillaryRefreshes: true })
+
+    expect(state.selectedReasoningEffort.value).toBe('xhigh')
+    state.primeSelectedThread('thread-2')
+    state.setSelectedReasoningEffort('high')
+    state.primeSelectedThread('thread-1')
+    expect(state.selectedReasoningEffort.value).toBe('xhigh')
+    expect(JSON.parse(window.localStorage.getItem('codex-web-local.selected-reasoning-by-context.v1') ?? '{}')).toMatchObject({
+      'thread-1': 'xhigh', 'thread-2': 'high',
+    })
+    const reopened = useDesktopState()
+    expect(reopened.selectedReasoningEffort.value).toBe('xhigh')
+  })
+
+  it('reconciles effort to the selected model supportedReasoningEfforts', async () => {
+    installTestWindow()
+    gatewayMocks.getThreadGroupsPage.mockResolvedValue({ groups: [], nextCursor: null })
+    gatewayMocks.getAvailableCollaborationModes.mockResolvedValue([{ value: 'default', label: 'Default' }])
+    gatewayMocks.getSkillsList.mockResolvedValue([])
+    gatewayMocks.getAccountRateLimits.mockResolvedValue(null)
+    gatewayMocks.getCurrentModelConfig.mockResolvedValue({
+      model: 'limited-model', providerId: '', reasoningEffort: 'medium', speedMode: 'standard',
+    })
+    gatewayMocks.getAvailableModelIds.mockImplementation(async (options?: { onReasoningMetadata?: (models: unknown[]) => void }) => {
+      options?.onReasoningMetadata?.([{
+        id: 'limited-model', defaultReasoningEffort: 'low', supportedReasoningEfforts: ['low', 'medium'],
+      }])
+      return ['limited-model']
+    })
+
+    const state = useDesktopState()
+    state.setSelectedReasoningEffort('xhigh')
+    await state.refreshAll({ includeSelectedThreadMessages: false, awaitAncillaryRefreshes: true })
+    expect(state.selectedReasoningEffort.value).toBe('low')
+  })
+
+  it('captures model and Extra High when adding a message to a running thread queue', async () => {
+    installTestWindow()
+    gatewayMocks.getPendingServerRequests.mockResolvedValue([])
+    gatewayMocks.resumeThread.mockResolvedValue(null)
+    gatewayMocks.getThreadDetail.mockResolvedValue({
+      model: 'gpt-6.1-sol', modelProvider: 'openai', messages: [], inProgress: true,
+      activeTurnId: 'turn-1', turnIndexByTurnId: {}, hasMoreOlder: false,
+    })
+    const state = useDesktopState()
+    state.primeSelectedThread('thread-queue')
+    await state.loadMessages('thread-queue')
+    state.setSelectedReasoningEffort('xhigh')
+    await state.sendMessageToSelectedThread('queued request', [], [], 'queue')
+    expect(gatewayMocks.setThreadQueueState).toHaveBeenLastCalledWith({
+      'thread-queue': [expect.objectContaining({
+        text: 'queued request', model: 'gpt-6.1-sol', effort: 'xhigh',
+      })],
+    })
+  })
+})
+
 describe('Codex CLI availability', () => {
   it('surfaces a chat runtime error when the app-server bridge cannot find Codex CLI', async () => {
     installTestWindow()
@@ -805,6 +886,7 @@ describe('provider model selection', () => {
       includeProviderModels: true,
       requireProviderModels: true,
       onMetadata: expect.any(Function),
+      onReasoningMetadata: expect.any(Function),
       providerId: 'opencode-zen',
     })
     expect(state.availableModelIds.value).toEqual([
@@ -965,6 +1047,7 @@ describe('provider model selection', () => {
       includeProviderModels: true,
       requireProviderModels: true,
       onMetadata: expect.any(Function),
+      onReasoningMetadata: expect.any(Function),
       providerId: 'opencode-zen',
     })
     expect(state.availableModelIds.value).toEqual([
@@ -1023,6 +1106,7 @@ describe('provider model selection', () => {
       includeProviderModels: true,
       requireProviderModels: true,
       onMetadata: expect.any(Function),
+      onReasoningMetadata: expect.any(Function),
       providerId: 'opencode-zen',
     })
     expect(state.availableModelIds.value).toEqual(['big-pickle', 'ring-2.6-1t-free'])
