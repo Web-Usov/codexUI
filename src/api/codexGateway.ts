@@ -31,6 +31,7 @@ import {
 } from './normalizers/v2'
 import type {
   SpeedMode,
+  ReasoningEffort as UiReasoningEffort,
   UiAccountEntry,
   UiAccountQuotaStatus,
   UiAccountUnavailableReason,
@@ -61,8 +62,8 @@ import { normalizePathForUi } from '../pathUtils.js'
 
 export type ModelReasoningMetadata = {
   id: string
-  defaultReasoningEffort: ReasoningEffort | ''
-  supportedReasoningEfforts: ReasoningEffort[]
+  defaultReasoningEffort: UiReasoningEffort | ''
+  supportedReasoningEfforts: UiReasoningEffort[]
 }
 
 type CurrentModelConfig = {
@@ -2087,12 +2088,12 @@ export async function getAvailableModelIds(options: { includeProviderModels?: bo
   options.onReasoningMetadata?.(payload.data.flatMap((row) => {
     const id = row.id || row.model
     if (!id) return []
-    const supportedReasoningEfforts = row.supportedReasoningEfforts
+    const supportedReasoningEfforts = (row.supportedReasoningEfforts ?? [])
       .map((option) => normalizeReasoningEffort(option.reasoningEffort))
-      .filter((effort): effort is ReasoningEffort => effort !== '')
+      .filter((effort): effort is UiReasoningEffort => effort !== '')
     return [{
       id,
-      defaultReasoningEffort: normalizeReasoningEffort(row.defaultReasoningEffort),
+      defaultReasoningEffort: normalizeReasoningEffort(row.defaultReasoningEffort) as UiReasoningEffort | '',
       supportedReasoningEfforts,
     }]
   }))
