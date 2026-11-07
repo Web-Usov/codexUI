@@ -461,6 +461,7 @@ import {
   uploadFile,
   type ComposerFileSuggestion,
   type ComposerPromptInfo,
+  type ModelReasoningMetadata,
 } from '../../api/codexGateway'
 import IconTablerArrowUp from '../icons/IconTablerArrowUp.vue'
 import IconTablerBolt from '../icons/IconTablerBolt.vue'
@@ -495,6 +496,7 @@ const props = defineProps<{
   selectedCollaborationMode: CollaborationModeKind
   models: string[]
   modelMetadata?: ZenModelMetadata[]
+  modelReasoningMetadata?: ModelReasoningMetadata[]
   selectedModel: string
   selectedReasoningEffort: ReasoningEffort | ''
   selectedSpeedMode: SpeedMode
@@ -650,7 +652,7 @@ const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.
 const DRAFT_STORAGE_PREFIX = 'codex-web-local.thread-draft.v1.'
 let lastActiveThreadId = ''
 
-const reasoningOptions: Array<{ value: ReasoningEffort; label: string }> = [
+const allReasoningOptions: Array<{ value: ReasoningEffort; label: string }> = [
   { value: 'none', label: 'None' },
   { value: 'minimal', label: 'Minimal' },
   { value: 'low', label: 'Low' },
@@ -658,6 +660,13 @@ const reasoningOptions: Array<{ value: ReasoningEffort; label: string }> = [
   { value: 'high', label: 'High' },
   { value: 'xhigh', label: 'Extra high' },
 ]
+const reasoningOptions = computed(() => {
+  const metadata = props.modelReasoningMetadata?.find((row) => row.id === props.selectedModel)
+  const supported = metadata?.supportedReasoningEfforts ?? []
+  return supported.length > 0
+    ? allReasoningOptions.filter((option) => supported.includes(option.value))
+    : allReasoningOptions
+})
 function formatModelLabel(modelId: string): string {
   return modelId.trim().replace(/^gpt/i, 'GPT')
 }

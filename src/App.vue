@@ -951,7 +951,7 @@
                   :cwd="composerCwd"
                   :collaboration-modes="availableCollaborationModes"
                   :selected-collaboration-mode="selectedCollaborationMode"
-                  :models="availableModelIds" :model-metadata="availableModelMetadata" :selected-model="composerSelectedModelId"
+                  :models="availableModelIds" :model-metadata="availableModelMetadata" :model-reasoning-metadata="availableModelReasoningMetadata" :selected-model="composerSelectedModelId"
                   :selected-reasoning-effort="selectedReasoningEffort"
                   :selected-speed-mode="selectedSpeedMode"
                   :is-updating-speed-mode="isUpdatingSpeedMode"
@@ -1056,7 +1056,7 @@
                     :cwd="composerCwd"
                     :collaboration-modes="availableCollaborationModes"
                     :selected-collaboration-mode="selectedCollaborationMode"
-                    :models="availableModelIds" :model-metadata="availableModelMetadata"
+                    :models="availableModelIds" :model-metadata="availableModelMetadata" :model-reasoning-metadata="availableModelReasoningMetadata"
                     :selected-model="composerSelectedModelId"
                     :selected-reasoning-effort="selectedReasoningEffort"
                     :selected-speed-mode="selectedSpeedMode"
@@ -1455,6 +1455,7 @@ const {
   availableCollaborationModes,
   availableModelIds,
   availableModelMetadata,
+  availableModelReasoningMetadata,
   selectedCollaborationMode,
   selectedModelId,
   selectedReasoningEffort,

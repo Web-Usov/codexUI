@@ -31,6 +31,7 @@ import {
 } from './normalizers/v2'
 import type {
   SpeedMode,
+  ReasoningEffort as UiReasoningEffort,
   UiAccountEntry,
   UiAccountQuotaStatus,
   UiAccountUnavailableReason,
@@ -58,6 +59,12 @@ import type {
   UiThreadAutomationStatus,
 } from '../types/codex'
 import { normalizePathForUi } from '../pathUtils.js'
+
+export type ModelReasoningMetadata = {
+  id: string
+  defaultReasoningEffort: UiReasoningEffort | ''
+  supportedReasoningEfforts: UiReasoningEffort[]
+}
 
 type CurrentModelConfig = {
   model: string
@@ -205,6 +212,8 @@ let cachedWorkspaceRootsState: WorkspaceRootsState | null = null
 
 export type StoredQueuedMessage = {
   id: string
+  model?: string
+  effort?: UiReasoningEffort | ''
   text: string
   imageUrls: string[]
   skills: Array<{ name: string; path: string }>
@@ -1487,6 +1496,7 @@ export async function removeAccount(storageId: string): Promise<AccountsListResu
 
 export type ResumedThread = {
   model: string
+  reasoningEffort: UiReasoningEffort | ''
   modelProvider: string
   messages: UiMessage[]
   inProgress: boolean
@@ -1539,6 +1549,7 @@ export async function resumeThread(threadId: string): Promise<ResumedThread> {
     const messages = normalizeThreadMessagesV2(payload, startTurnIndex)
     return {
       model: normalizeThreadModelFromPayload(payload),
+      reasoningEffort: normalizeReasoningEffort((payload as { reasoningEffort?: unknown }).reasoningEffort) as UiReasoningEffort | '',
       modelProvider: normalizeThreadModelProviderFromPayload(payload),
       messages,
       inProgress: readThreadInProgressFromResponse(payload),
@@ -2062,17 +2073,30 @@ async function fetchProviderModelIds(providerId?: string): Promise<{ ids: string
   return null
 }
 
-export async function getAvailableModelIds(options: { includeProviderModels?: boolean; requireProviderModels?: boolean; providerId?: string; onMetadata?: (models: ZenModelMetadata[]) => void } = {}): Promise<string[]> {
+export async function getAvailableModelIds(options: { includeProviderModels?: boolean; requireProviderModels?: boolean; providerId?: string; onMetadata?: (models: ZenModelMetadata[]) => void; onReasoningMetadata?: (models: ModelReasoningMetadata[]) => void } = {}): Promise<string[]> {
   const shouldIncludeProviderModels = options.includeProviderModels !== false
   const providerModels = shouldIncludeProviderModels ? await fetchProviderModelIds(options.providerId) : null
 
   options.onMetadata?.(providerModels?.models ?? [])
 
   if (providerModels?.exclusive || options.requireProviderModels) {
+    options.onReasoningMetadata?.([])
     return providerModels?.ids ?? []
   }
 
   const payload = await callRpc<ModelListResponse>('model/list', {})
+  options.onReasoningMetadata?.(payload.data.flatMap((row) => {
+    const id = row.id || row.model
+    if (!id) return []
+    const supportedReasoningEfforts = (row.supportedReasoningEfforts ?? [])
+      .map((option) => normalizeReasoningEffort(option.reasoningEffort))
+      .filter((effort): effort is UiReasoningEffort => effort !== '')
+    return [{
+      id,
+      defaultReasoningEffort: normalizeReasoningEffort(row.defaultReasoningEffort) as UiReasoningEffort | '',
+      supportedReasoningEfforts,
+    }]
+  }))
   const ids: string[] = []
   for (const row of payload.data) {
     const candidate = row.id || row.model
@@ -2515,6 +2539,8 @@ function normalizeStoredQueuedMessage(value: unknown): StoredQueuedMessage | nul
     imageUrls,
     skills,
     fileAttachments,
+    model: typeof record.model === 'string' ? record.model.trim() : '',
+    effort: normalizeReasoningEffort(record.effort) as UiReasoningEffort | '',
     collaborationMode: record.collaborationMode === 'plan' ? 'plan' : 'default',
   }
 }
